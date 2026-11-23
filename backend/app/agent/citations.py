@@ -14,7 +14,7 @@ from .context import SourceRegistry
 
 _GROUP = re.compile(r"\[(\s*S?\d+\s*(?:[,;]\s*S?\d+\s*)*)\]", re.IGNORECASE)
 _ID = re.compile(r"S?(\d+)", re.IGNORECASE)
-_RAW_URL = re.compile(r"(?<![\(\[<])https?://[^\s)\]>]+")
+_RAW_URL = re.compile(r"(?<![\(\[<`])https?://[^\s)\]>`]+")
 
 
 class CitationStreamer:

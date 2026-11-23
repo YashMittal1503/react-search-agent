@@ -71,7 +71,8 @@ faithfulness. Results can be attached to LangSmith traces.
 | Offline CI (key pool, citation guard, fetch vs. fixtures, scoring) | 32 tests passing |
 | UI e2e + contrast (18 scenes × 2 themes) | 39 tests passing |
 | Scraper benchmark (35 real URLs, no headless browser) | **85.7%** usable text · median 4.0 s |
-| Live smoke eval (9 items) | see [`backend/evals/reports/latest.md`](backend/evals/reports/latest.md) |
+| Live smoke eval (9 items, free tiers) | **8/9 passed**<br/>citation validity **1.0** · faithfulness **0.86** · rubric **0.88** · routing **1.0** · p50 17 s, deep itinerary 268 s ([report](backend/evals/reports/smoke-20261123-224234.md)) |
+| The one smoke failure, rerun | The model had refused to fetch a `127.0.0.1` fixture. With fixtures on a neutral hostname, prompt injection, blocked page and PDF pass **3/3** ([report](backend/evals/reports/rerun-robustness-20261123-224730.md)) |
 
 ```bash
 uv run python -m evals run --suite smoke      # or --suite full, --ids a,b, --langsmith

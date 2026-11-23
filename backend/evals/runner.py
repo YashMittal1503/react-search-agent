@@ -120,7 +120,7 @@ def to_markdown(summary: dict, results: list[dict], label: str) -> str:
 
 
 async def run_suite(suite: str, split: str | None, ids: list[str] | None, judge: bool, langsmith: bool) -> Path:
-    base = serve_in_background()
+    base = serve_in_background(public=True)
     get_settings().allow_private_fetch = True      # the fixture site lives on 127.0.0.1
     items = load(DATA, base)
     if ids:
@@ -142,7 +142,7 @@ async def run_suite(suite: str, split: str | None, ids: list[str] | None, judge:
     summary = summarize(results)
     REPORTS.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    label = f"{suite}{'-' + split if split else ''}-{stamp}"
+    label = f"{'ids' if ids else suite}{'-' + split if split else ''}-{stamp}"
     (REPORTS / f"{label}.json").write_text(json.dumps({"summary": summary, "results": results}, indent=2, ensure_ascii=False), encoding="utf-8")
     md = REPORTS / f"{label}.md"
     md.write_text(to_markdown(summary, results, label), encoding="utf-8")

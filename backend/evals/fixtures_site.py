@@ -16,7 +16,11 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
 
 PORT = 8765
-BASE = f"http://127.0.0.1:{PORT}"
+LOCAL = f"http://127.0.0.1:{PORT}"
+# What the agent sees: a neutral hostname that resolves to 127.0.0.1 (public wildcard DNS). Models sometimes refuse
+# to even try "127.0.0.1" URLs, which would test the model's guess, not the fetch pipeline. Offline tests use LOCAL.
+PUBLIC = f"http://fixtures.localtest.me:{PORT}"
+BASE = LOCAL
 
 app = FastAPI(title="eval fixtures")
 
@@ -107,13 +111,13 @@ def report():
     return Response(_pdf(), media_type="application/pdf")
 
 
-def serve_in_background() -> str:
+def serve_in_background(public: bool = False) -> str:
     """Start the fixture site in a daemon thread (idempotent). Returns its base URL."""
     import httpx
 
     try:
         if httpx.get(BASE + "/article", timeout=0.5).status_code == 200:
-            return BASE
+            return _pick(public)
     except Exception:
         pass
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning"))
@@ -121,10 +125,21 @@ def serve_in_background() -> str:
     for _ in range(50):
         try:
             if httpx.get(BASE + "/article", timeout=0.5).status_code == 200:
-                return BASE
+                return _pick(public)
         except Exception:
             time.sleep(0.1)
     raise RuntimeError("fixture site failed to start")
+
+
+def _pick(public: bool) -> str:
+    if not public:
+        return LOCAL
+    import socket
+
+    try:
+        return PUBLIC if socket.gethostbyname("fixtures.localtest.me") == "127.0.0.1" else LOCAL
+    except OSError:
+        return LOCAL
 
 
 if __name__ == "__main__":
