@@ -1,9 +1,19 @@
+/**
+ * Backend client: REST calls for threads/suggestions and the SSE chat stream.
+ *
+ * Every request carries `X-Client-Id`, a random id stored in localStorage. There are no accounts: the backend
+ * keys threads by this id, so clearing site data starts a fresh, empty history.
+ */
 import { createParser } from "eventsource-parser";
 import type { ChatMessage, Mode, Suggestion, Thread } from "./types";
 
+/** Backend origin (set NEXT_PUBLIC_API_URL at build time when the backend isn't on localhost:8000). */
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
-/** Anonymous per-browser id: threads are stored server-side under it. */
+/**
+ * Anonymous per-browser id: threads are stored server-side under it.
+ * Falls back to a throwaway id when storage is blocked (private mode), so the app still works for one session.
+ */
 export function clientId(): string {
   if (typeof window === "undefined") return "server-render";
   try {
@@ -18,6 +28,7 @@ export function clientId(): string {
   }
 }
 
+/** JSON request helper: adds headers, throws an Error carrying FastAPI's `detail` message on non-2xx. */
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(API_URL + path, {
     ...init,
@@ -33,6 +44,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Typed wrappers for the REST endpoints (see backend/app/main.py). */
 export const api = {
   threads: () => req<Thread[]>("/api/threads"),
   messages: (id: string) => req<ChatMessage[]>(`/api/threads/${id}/messages`),
@@ -43,12 +55,19 @@ export const api = {
   status: () => req<Record<string, unknown>>("/api/status"),
 };
 
+/** One SSE frame from /api/chat: the event name (step, token, scene, done...) and its JSON payload. */
 export interface StreamEvent {
   event: string;
   data: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
-/** POST /api/chat and parse the SSE stream. */
+/**
+ * POST /api/chat and parse the SSE stream, calling `onEvent` for every frame as it arrives.
+ *
+ * EventSource can't POST, so the stream is read with fetch + eventsource-parser. The browser's timezone and
+ * locale are sent so "today" and number formats match the user. Aborting `signal` stops the request, and the
+ * backend notices the disconnect and stops the agent.
+ */
 export async function streamChat(
   body: { message: string; thread_id?: string | null; mode: Mode },
   onEvent: (e: StreamEvent) => void,

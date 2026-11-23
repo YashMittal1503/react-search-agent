@@ -5,17 +5,25 @@ import { useEffect, useRef, useState } from "react";
 import type { Mode } from "@/lib/types";
 import { useChat } from "@/store/chat";
 
+/**
+ * Message box: auto-growing textarea, the Auto/Quick/Deep mode switch, and Send/Stop.
+ * Enter sends, Shift+Enter adds a line, "/" anywhere focuses the box.
+ */
+
+/** Research modes; `mode` is sent with each message and can override the router. */
 const MODES: { id: Mode; label: string; icon: typeof Zap; hint: string }[] = [
   { id: "auto", label: "Auto", icon: Wand2, hint: "Let the agent decide" },
   { id: "quick", label: "Quick", icon: Zap, hint: "1-3 lookups, seconds" },
   { id: "deep", label: "Deep", icon: Sparkles, hint: "Plans, subagents, minutes" },
 ];
 
+/** The message composer (used under the chat and on the empty state). */
 export function Composer({ autoFocus }: { autoFocus?: boolean }) {
   const { send, stop, streaming, mode, setMode } = useChat();
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
 
+  // Auto-grow up to 220 px, then scroll inside the box.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -48,6 +56,7 @@ export function Composer({ autoFocus }: { autoFocus?: boolean }) {
         autoFocus={autoFocus}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
+          // isComposing: don't send while an IME (Chinese/Japanese/Hindi input) is still composing a word.
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             submit();

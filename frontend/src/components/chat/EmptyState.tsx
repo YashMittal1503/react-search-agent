@@ -9,11 +9,15 @@ import { api } from "@/lib/api";
 import type { Suggestion } from "@/lib/types";
 import { useChat } from "@/store/chat";
 
+/** Empty state: greeting and suggestion cards. Hovering or focusing a card previews its background scene. */
+
+/** Icon names used by backend suggestions -> lucide components. */
 const ICONS: Record<string, typeof Search> = {
   "cloud-sun": CloudSun, umbrella: Umbrella, plane: Plane, palmtree: Palmtree, newspaper: Newspaper, cpu: Cpu,
   "trending-up": TrendingUp, rocket: Rocket, trophy: Trophy, utensils: Utensils, "heart-pulse": HeartPulse, search: Search,
 };
 
+/** Shown instantly (and if the backend is offline) until /api/suggestions answers. */
 const FALLBACK: Suggestion[] = [
   { category: "Weather", scene: "weather", icon: "cloud-sun", question: "What's the weather in Mumbai today?" },
   { category: "Travel", scene: "travel", icon: "plane", params: { setting: "city" }, question: "Plan a 4-day Kyoto itinerary for early spring on a mid-range budget" },
@@ -23,6 +27,7 @@ const FALLBACK: Suggestion[] = [
   { category: "Travel", scene: "travel", icon: "palmtree", params: { setting: "beach" }, question: "Best beaches in Goa for a quiet 3-day trip, with where to stay" },
 ];
 
+/** The new-chat screen; clicking a card sends its question. */
 export function EmptyState() {
   const { send, setPreviewScene } = useChat();
   const [items, setItems] = useState<Suggestion[]>(FALLBACK);

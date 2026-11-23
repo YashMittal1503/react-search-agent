@@ -1,22 +1,28 @@
 "use client";
 
+/**
+ * The app's single store (zustand): threads, the open conversation, streaming state and the background scene.
+ *
+ * `send` is the heart of the UI: it appends the user message plus an empty assistant message, then applies each
+ * SSE event from the backend to that assistant message as it arrives (timeline steps, sources, tokens, widgets...).
+ */
 import { create } from "zustand";
 import { api, streamChat, type StreamEvent } from "@/lib/api";
 import { guessScene } from "@/lib/scene";
 import type { AssistantMeta, ChatMessage, Mode, SceneState, Source, Step, Thread } from "@/lib/types";
 
 interface ChatState {
-  threads: Thread[];
-  activeId: string | null;
-  messages: ChatMessage[];
+  threads: Thread[];                  // sidebar list, most recent first
+  activeId: string | null;            // open thread (null = new chat / empty state)
+  messages: ChatMessage[];            // messages of the open thread
   loadingThread: boolean;
-  streaming: boolean;
-  mode: Mode;
-  scene: SceneState;
-  previewScene: SceneState | null;
-  ambient: boolean;
+  streaming: boolean;                 // a turn is in progress
+  mode: Mode;                         // Auto / Quick / Deep toggle
+  scene: SceneState;                  // background scene for the current topic
+  previewScene: SceneState | null;    // temporary scene while hovering a suggestion card
+  ambient: boolean;                   // user toggle: animated backgrounds on/off
   sidebarOpen: boolean;
-  abort: AbortController | null;
+  abort: AbortController | null;      // cancels the running stream (Stop button)
 
   loadThreads: () => Promise<void>;
   openThread: (id: string | null) => Promise<void>;
@@ -32,8 +38,13 @@ interface ChatState {
   setSidebar: (open: boolean) => void;
 }
 
+/** Local id for optimistic messages (replaced by server ids when the thread is reloaded). */
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
 
+/**
+ * Restore the scene when reopening a thread: the latest assistant message's route, refined by its weather
+ * widget (today's condition, day/night) so a rainy forecast reopens as rain.
+ */
 function sceneFromMessages(msgs: ChatMessage[]): SceneState {
   for (let i = msgs.length - 1; i >= 0; i--) {
     const r = msgs[i].meta?.route;
@@ -48,6 +59,7 @@ function sceneFromMessages(msgs: ChatMessage[]): SceneState {
   return { scene: "default", params: {} };
 }
 
+/** Reflect the open thread in the URL (`/?t=<id>`) without a navigation, so reloads and links reopen it. */
 function setUrl(id: string | null) {
   if (typeof window === "undefined") return;
   const url = id ? `/?t=${id}` : "/";
@@ -64,6 +76,7 @@ export const useChat = create<ChatState>((set, get) => ({
   scene: { scene: "default", params: {} },
   previewScene: null,
   ambient: true,
+  // Start closed on phones, so the drawer doesn't cover the chat (and slide away) on every page load.
   sidebarOpen: typeof window === "undefined" ? true : window.innerWidth >= 768,
   abort: null,
 
@@ -75,6 +88,7 @@ export const useChat = create<ChatState>((set, get) => ({
     }
   },
 
+  /** Open a thread (or the empty state for `null`), cancelling any stream in progress. */
   openThread: async (id) => {
     get().abort?.abort();
     setUrl(id);
@@ -92,6 +106,7 @@ export const useChat = create<ChatState>((set, get) => ({
     }
   },
 
+  /** Send a message and stream the agent's reply into a new assistant message. */
   send: async (text) => {
     const q = text.trim();
     if (!q || get().streaming) return;
@@ -101,15 +116,19 @@ export const useChat = create<ChatState>((set, get) => ({
       created_at: new Date().toISOString(), streaming: true,
     };
     const abort = new AbortController();
+    // Optimistic UI: show both messages immediately and switch the scene from the text before the server answers.
     set((s) => ({ messages: [...s.messages, user, bot], streaming: true, abort, scene: guessScene(q), previewScene: null }));
 
+    // Helpers that update only the assistant message being streamed (or just its meta).
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
       set((s) => ({ messages: s.messages.map((m) => (m.id === bot.id ? fn(m) : m)) }));
     const meta = (fn: (m: AssistantMeta) => AssistantMeta) => patch((m) => ({ ...m, meta: fn(m.meta) }));
 
+    /** Apply one SSE event to the store. Event shapes are produced by backend/app/agent (see main.py's docstring). */
     const onEvent = ({ event, data }: StreamEvent) => {
       switch (event) {
         case "thread":
+          // A new chat got its id: adopt it, put it in the URL and show it in the sidebar right away.
           if (!get().activeId) {
             set({ activeId: data.thread_id });
             setUrl(data.thread_id);
@@ -118,12 +137,14 @@ export const useChat = create<ChatState>((set, get) => ({
           }
           break;
         case "scene":
+          // Keep params when the scene family is unchanged (e.g. weather condition refined by real data).
           set((s) => ({ scene: { scene: data.scene, params: { ...(s.scene.scene === data.scene ? s.scene.params : {}), ...data.params } } }));
           break;
         case "route":
           meta((m) => ({ ...m, route: { ...m.route, ...data } }));
           break;
         case "step":
+          // Steps arrive as "running" and are later updated by id (done/failed + details): merge, don't append.
           meta((m) => {
             const steps = [...(m.steps || [])];
             const i = steps.findIndex((s) => s.id === data.id);
@@ -166,6 +187,7 @@ export const useChat = create<ChatState>((set, get) => ({
           meta((m) => ({ ...m, error: data.message }));
           break;
         case "done":
+          // The final payload is authoritative: it replaces the streamed answer and the provisional lists.
           patch((m) => ({
             ...m,
             content: data.answer || m.content,
@@ -188,16 +210,19 @@ export const useChat = create<ChatState>((set, get) => ({
       }
     } finally {
       patch((m) => ({ ...m, streaming: false }));
+      // Refresh the sidebar: the server may have set a title and moved the thread to the top.
       set({ streaming: false, abort: null });
       get().loadThreads();
     }
   },
 
+  /** Stop the current turn (the backend stops the agent when the stream disconnects). */
   stop: () => {
     get().abort?.abort();
     set({ streaming: false });
   },
 
+  /** Drop the last exchange and ask the last user message again. */
   regenerate: async () => {
     const msgs = get().messages;
     const lastUser = [...msgs].reverse().find((m) => m.role === "user");
@@ -207,6 +232,7 @@ export const useChat = create<ChatState>((set, get) => ({
     await get().send(lastUser.content);
   },
 
+  // Thread edits are optimistic: update the list first, then tell the server (failures are ignored).
   renameThread: async (id, title) => {
     set((s) => ({ threads: s.threads.map((t) => (t.id === id ? { ...t, title } : t)) }));
     await api.rename(id, title).catch(() => {});

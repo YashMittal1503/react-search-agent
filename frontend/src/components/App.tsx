@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * App shell: scene background, sidebar, header (scene chip, theme toggle), the message list, the composer and
+ * the ⌘K palette. Messages always sit on glass surfaces above the scene, so the text stays readable.
+ */
 import { Moon, PanelLeftOpen, Sparkles, Sun } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Toaster } from "sonner";
@@ -14,11 +18,13 @@ import { SceneBackground } from "./scenes/SceneBackground";
 import { Sidebar } from "./Sidebar";
 
 // Theme lives on <html class="dark"> (set before paint by the inline script in layout.tsx).
+// useSyncExternalStore keeps React in sync with that class without setState-in-effect.
 const themeListeners = new Set<() => void>();
 function subscribeTheme(cb: () => void) {
   themeListeners.add(cb);
   return () => themeListeners.delete(cb);
 }
+/** Current theme and a toggle that updates <html>, localStorage and every subscriber. */
 function useTheme() {
   const dark = useSyncExternalStore(subscribeTheme, () => document.documentElement.classList.contains("dark"), () => false);
   const toggle = () => {
@@ -30,13 +36,15 @@ function useTheme() {
   return { dark, toggle };
 }
 
+/** The whole chat UI. */
 export function App() {
   const { messages, loadThreads, openThread, scene, previewScene, setPreviewScene, ambient, setAmbient, sidebarOpen, setSidebar, loadingThread, streaming } = useChat();
   const { dark, toggle } = useTheme();
   const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const stick = useRef(true);
+  const stick = useRef(true);   // auto-scroll only while the user is near the bottom (they may be reading above)
 
+  // On mount: load the sidebar, reopen the thread in the URL, restore the ambient preference.
   useEffect(() => {
     loadThreads();
     const t = new URLSearchParams(window.location.search).get("t");
@@ -59,7 +67,7 @@ export function App() {
     if (stick.current) bottom.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth", block: "end" });
   }, [messages, streaming]);
 
-  const active = previewScene || scene;
+  const active = previewScene || scene;   // hovering a suggestion card previews its scene
   const empty = messages.length === 0 && !loadingThread;
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")?.id;
 

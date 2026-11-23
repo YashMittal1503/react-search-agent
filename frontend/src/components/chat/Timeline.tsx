@@ -6,8 +6,10 @@ import { useState } from "react";
 import type { Step, Todo } from "@/lib/types";
 import { Favicon } from "./Citation";
 
+/** Timeline step kind -> icon. */
 const ICON = { think: Brain, search: Globe, news: Newspaper, fetch: FileText, weather: CloudSun, write: PenLine } as const;
 
+/** Human sentence for a step, e.g. Searching "kyoto cherry blossom 2026". */
 function stepText(s: Step) {
   switch (s.kind) {
     case "search": return <>Searching <span className="text-fg">“{s.label}”</span></>;
@@ -19,10 +21,14 @@ function stepText(s: Step) {
   }
 }
 
-/** Live research timeline: the agent's plan (deep mode) plus every search/read it performs. */
+/**
+ * Live research timeline: the agent's plan (deep mode) plus every search/read it performs.
+ * Stays open while researching; afterwards it collapses to a one-line summary the user can expand.
+ * Failed reads say "trying other sources", because the agent moves on to another page.
+ */
 export function Timeline({ steps, plan, streaming }: { steps: Step[]; plan?: Todo[]; streaming: boolean }) {
   const [open, setOpen] = useState(true);
-  const visible = steps.filter((s) => s.kind);
+  const visible = steps.filter((s) => s.kind);   // status-only updates without a kind aren't timeline lines
   if (!visible.length && !plan?.length) return null;
   const searches = visible.filter((s) => s.kind === "search" || s.kind === "news").length;
   const reads = visible.filter((s) => s.kind === "fetch" && s.status === "done").length;
@@ -72,6 +78,7 @@ export function Timeline({ steps, plan, streaming }: { steps: Step[]; plan?: Tod
                       </div>
                       {s.domains && s.domains.length > 0 && (
                         <div className="mt-1 flex flex-wrap gap-1.5">
+                          {/* De-duplicated: two results from one site would otherwise give duplicate React keys. */}
                           {[...new Set(s.domains)].map((d) => (
                             <span key={d} className="inline-flex items-center gap-1 rounded-full bg-surface-hover px-2 py-0.5 text-[11px]"><Favicon domain={d} size={12} />{d}</span>
                           ))}

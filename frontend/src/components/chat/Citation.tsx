@@ -1,9 +1,11 @@
 "use client";
 
+/** Citation chip with a hover preview, plus small helpers (favicon, date) shared by source UIs. */
 import * as HoverCard from "@radix-ui/react-hover-card";
 import { ExternalLink } from "lucide-react";
 import type { Source } from "@/lib/types";
 
+/** A site's favicon; hides itself if the image fails to load (rather than showing a broken icon). */
 export function Favicon({ src, domain, size = 16 }: { src?: string; domain: string; size?: number }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
@@ -13,6 +15,7 @@ export function Favicon({ src, domain, size = 16 }: { src?: string; domain: stri
   );
 }
 
+/** "24 Nov 2026" in the user's locale; unparseable dates fall back to their first 10 characters. */
 export function formatDate(d?: string | null) {
   if (!d) return null;
   const t = new Date(d);
@@ -20,7 +23,10 @@ export function formatDate(d?: string | null) {
   return t.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-/** Inline [n] chip with a hover card showing the exact URL it maps to. */
+/**
+ * Inline [n] chip with a hover card showing the exact URL it maps to.
+ * If the source isn't known (e.g. while streaming), it renders a plain superscript instead of a broken link.
+ */
 export function CitationChip({ n, source }: { n: number; source?: Source }) {
   if (!source) {
     return <sup className="mx-0.5 text-[0.7em] text-subtle">[{n}]</sup>;

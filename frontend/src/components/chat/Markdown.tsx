@@ -6,6 +6,11 @@ import remarkGfm from "remark-gfm";
 import type { Source } from "@/lib/types";
 import { CitationChip } from "./Citation";
 
+/**
+ * Answer renderer: GitHub-flavoured markdown (tables, lists) with [n] markers turned into citation chips.
+ * Memoised, because the streaming answer re-renders on every token.
+ */
+
 /** Turns "[3]" markers into links react-markdown can hand to our chip renderer. Code spans are left alone. */
 function linkCitations(text: string): string {
   const parts = text.split(/(```[\s\S]*?```|`[^`]*`)/g);
@@ -14,6 +19,7 @@ function linkCitations(text: string): string {
     .join("");
 }
 
+/** Render `text`, resolving `#cite-n` links to the source numbered n. Other links open in a new tab. */
 function MarkdownImpl({ text, sources, className }: { text: string; sources: Source[]; className?: string }) {
   const byN = useMemo(() => new Map(sources.map((s) => [s.n ?? -1, s])), [sources]);
   const content = useMemo(() => linkCitations(text), [text]);

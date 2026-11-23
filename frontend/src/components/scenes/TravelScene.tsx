@@ -3,6 +3,9 @@
 import type { SceneParams } from "@/lib/types";
 import { Particles } from "./Particles";
 
+/** Travel scene: a landscape for the destination type (beach, mountain, desert, snow, countryside, city). */
+
+/** A small plane crossing the sky. */
 function Plane() {
   return (
     <div className="anim-drift absolute top-[16%]" style={{ animationDuration: "48s" }}>
@@ -14,6 +17,7 @@ function Plane() {
   );
 }
 
+/** A few gliding birds. */
 function Birds() {
   return (
     <div className="anim-drift absolute top-[22%]" style={{ animationDuration: "70s", animationDelay: "-20s" }}>
@@ -24,6 +28,7 @@ function Birds() {
   );
 }
 
+/** Pick the landscape from `params.setting` (set by the router, or guessed from the destination name). */
 export function TravelScene({ params }: { params: SceneParams }) {
   const setting = params.setting || "city";
 

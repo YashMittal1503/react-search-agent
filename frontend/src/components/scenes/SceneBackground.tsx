@@ -6,6 +6,7 @@ import { DefaultScene, FinanceScene, FoodScene, HealthScene, NewsScene, SpaceSce
 import { TravelScene } from "./TravelScene";
 import { WeatherScene } from "./WeatherScene";
 
+/** Scene family -> component. Weather and travel take parameters (condition/day-night, landscape). */
 function Scene({ s }: { s: SceneState }) {
   switch (s.scene) {
     case "weather": return <WeatherScene params={s.params} />;
@@ -26,6 +27,7 @@ function Scene({ s }: { s: SceneState }) {
  *  ≥86%-opaque blurred surface, so text never sits on the artwork directly. */
 export function SceneBackground({ scene, enabled }: { scene: SceneState; enabled: boolean }) {
   const s: SceneState = enabled ? scene : { scene: "default", params: {} };
+  // A new key on any visible change makes AnimatePresence crossfade the old scene into the new one (0.8 s).
   const key = `${s.scene}:${s.params.condition ?? ""}:${s.params.is_day ?? ""}:${s.params.setting ?? ""}`;
   return (
     <div className="pointer-events-none fixed inset-0 z-0" aria-hidden data-testid="scene" data-active-scene={s.scene}>

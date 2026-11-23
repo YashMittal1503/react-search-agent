@@ -1,3 +1,4 @@
+/** Fake backend for e2e tests: Playwright intercepts every API call, so tests need no keys or network. */
 import type { Page } from "@playwright/test";
 
 const API = "http://localhost:8000";
@@ -12,10 +13,12 @@ const weatherWidget = {
 
 const source = { id: 1, n: 1, url: "https://open-meteo.com/en/docs#latitude=19.07&longitude=72.88", title: "Open-Meteo forecast for Mumbai", domain: "open-meteo.com", snippet: "", published: null, kind: "api", fetched: true, favicon: "" };
 
+/** Serialise (event, data) pairs into an SSE response body, the way the real /api/chat streams. */
 export function sse(events: [string, unknown][]) {
   return events.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join("");
 }
 
+/** Route threads, suggestions and a scripted weather chat turn to canned responses. */
 export async function mockBackend(page: Page) {
   await page.route(`${API}/api/threads`, (r) => r.fulfill({ json: [] }));
   await page.route(`${API}/api/suggestions`, (r) => r.fulfill({ status: 404, body: "" }));

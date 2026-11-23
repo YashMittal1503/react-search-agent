@@ -1,11 +1,13 @@
 "use client";
 
+/** Thread sidebar: new chat, search, threads grouped by recency, and per-thread rename / pin / delete. */
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
 import { MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Thread } from "@/lib/types";
 import { useChat } from "@/store/chat";
 
+/** Bucket threads ChatGPT-style (Pinned, Today, Yesterday, 7/30 days, Older) by last activity, in local time. */
 function group(threads: Thread[]) {
   const now = new Date();
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -23,6 +25,7 @@ function group(threads: Thread[]) {
   return Object.entries(groups).filter(([, v]) => v.length);
 }
 
+/** One thread: click to open; the ⋯ menu renames inline (Enter saves, Escape cancels), pins or deletes. */
 function ThreadRow({ t, active }: { t: Thread; active: boolean }) {
   const { openThread, renameThread, pinThread, deleteThread, setSidebar } = useChat();
   const [editing, setEditing] = useState(false);
@@ -61,6 +64,7 @@ function ThreadRow({ t, active }: { t: Thread; active: boolean }) {
   );
 }
 
+/** Static column on desktop; an overlay drawer with a backdrop on phones (< 768 px). */
 export function Sidebar() {
   const { threads, activeId, openThread, sidebarOpen, setSidebar } = useChat();
   const [q, setQ] = useState("");

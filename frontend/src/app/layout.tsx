@@ -1,3 +1,4 @@
+/** Root layout: fonts, metadata and the pre-paint theme script. */
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
@@ -14,6 +15,10 @@ export const viewport: Viewport = {
   themeColor: [{ media: "(prefers-color-scheme: light)", color: "#f5f6f8" }, { media: "(prefers-color-scheme: dark)", color: "#0b0d12" }],
 };
 
+/**
+ * The inline script runs before first paint and adds `dark` to <html> from the saved choice (or the OS setting),
+ * so there is no light-to-dark flash. suppressHydrationWarning: that class differs from the server's HTML on purpose.
+ */
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`} suppressHydrationWarning>

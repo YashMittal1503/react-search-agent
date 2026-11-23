@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 
 type Kind = "rain" | "snow" | "stars" | "bubbles";
 
+/** One particle: position, depth z (0 far .. 1 near: size, speed, opacity), speed v, size r, phase a. */
 interface P { x: number; y: number; z: number; v: number; r: number; a: number }
 
 /** Lightweight canvas particles (rain, snow, twinkling stars, bubbles).
@@ -18,9 +19,10 @@ export function Particles({ kind, density = 1, color }: { kind: Kind; density?: 
     if (!ctx) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.classList.contains("reduce-motion");
     let w = 0, h = 0, raf = 0;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);   // sharp on retina, capped to keep fill cost low
     let parts: P[] = [];
 
+    /** New particle: anywhere on screen at start, otherwise just off the edge it enters from. */
     const spawn = (initial: boolean): P => {
       const z = Math.random();
       return {
@@ -33,6 +35,7 @@ export function Particles({ kind, density = 1, color }: { kind: Kind; density?: 
       };
     };
 
+    /** Fit the canvas to its box and re-seed; particle count scales with screen area. */
     const resize = () => {
       w = canvas.clientWidth;
       h = canvas.clientHeight;
@@ -44,6 +47,7 @@ export function Particles({ kind, density = 1, color }: { kind: Kind; density?: 
       parts = Array.from({ length: n }, () => spawn(true));
     };
 
+    /** One animation frame (t = ms timestamp, drives wobble and twinkle). */
     const draw = (t: number) => {
       ctx.clearRect(0, 0, w, h);
       const c = color || (kind === "rain" ? "rgba(200,220,255," : kind === "snow" ? "rgba(255,255,255," : kind === "stars" ? "rgba(255,255,255," : "rgba(255,255,255,");
@@ -76,11 +80,12 @@ export function Particles({ kind, density = 1, color }: { kind: Kind; density?: 
           ctx.stroke();
           if (!reduce) { p.y -= p.v; p.x += Math.sin(t / 2000 + p.a) * 0.3; }
         }
-        if (p.y > h + 30 || p.y < -40 || p.x < -40) Object.assign(p, spawn(false));
+        if (p.y > h + 30 || p.y < -40 || p.x < -40) Object.assign(p, spawn(false));   // recycle off-screen particles
       }
       if (!reduce) raf = requestAnimationFrame(draw);
     };
 
+    /** Stop drawing in background tabs (saves battery), resume when visible. */
     const onVis = () => {
       cancelAnimationFrame(raf);
       if (!document.hidden) raf = requestAnimationFrame(draw);

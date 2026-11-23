@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Chat messages. An assistant message is a stack of glass cards, top to bottom: mode badge, research timeline,
+ * widgets (weather/news), source strip, the answer with citation chips and actions, a notice/error bar, and
+ * follow-up chips (on the last answer only).
+ */
 import { motion } from "motion/react";
 import { AlertTriangle, Check, Copy, CornerDownRight, RefreshCw, Share2, Sparkles, Zap } from "lucide-react";
 import { useState } from "react";
@@ -11,6 +16,7 @@ import { SourceStrip } from "./Sources";
 import { Timeline } from "./Timeline";
 import { Widgets } from "./Widgets";
 
+/** The user's message as a right-aligned bubble (line breaks preserved). */
 export function UserMessage({ m }: { m: ChatMessage }) {
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex justify-end">
@@ -22,11 +28,13 @@ export function UserMessage({ m }: { m: ChatMessage }) {
   );
 }
 
+/** Answer + a reference list (`[n]: url "title"`), so copied/downloaded answers keep working citations. */
 function toMarkdown(m: ChatMessage) {
   const refs = (m.meta.sources || []).map((s) => `[${s.n}]: ${s.url} "${s.title.replace(/"/g, "'")}"`).join("\n");
   return m.content + (refs ? `\n\n---\nSources\n${refs}\n` : "");
 }
 
+/** One assistant answer; `last` enables regenerate and the follow-up chips. */
 export function AssistantMessage({ m, last }: { m: ChatMessage; last: boolean }) {
   const { send, regenerate, streaming } = useChat();
   const [copied, setCopied] = useState(false);
@@ -34,14 +42,15 @@ export function AssistantMessage({ m, last }: { m: ChatMessage; last: boolean })
   const all = m.meta.all_sources || [];
   const steps = m.meta.steps || [];
   const travel = m.meta.route?.intent === "travel";
-  const writing = m.streaming && m.content.length > 0;
-  const thinking = m.streaming && !m.content;
+  const writing = m.streaming && m.content.length > 0;   // tokens are arriving
+  const thinking = m.streaming && !m.content;            // still researching: show a skeleton
 
   const copy = async () => {
     await navigator.clipboard.writeText(toMarkdown(m));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+  /** Download the answer as a Markdown file (no server round-trip, nothing shared publicly). */
   const share = async () => {
     const blob = new Blob([toMarkdown(m)], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
@@ -64,6 +73,7 @@ export function AssistantMessage({ m, last }: { m: ChatMessage; last: boolean })
       )}
       <Timeline steps={steps} plan={m.meta.plan} streaming={!!m.streaming && !writing} />
       {(m.meta.widgets?.length ?? 0) > 0 && <Widgets widgets={m.meta.widgets!} />}
+      {/* While writing, show what was found so far; once done, only the sources the answer cites. */}
       {(cited.length > 0 || (writing && all.length > 0)) && <SourceStrip cited={cited} all={all} />}
 
       {(m.content || thinking) && (

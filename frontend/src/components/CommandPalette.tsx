@@ -5,6 +5,10 @@ import { MessageSquare, Moon, Plus, Sparkles, Sun, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useChat } from "@/store/chat";
 
+/**
+ * ⌘K / Ctrl+K palette (cmdk): quick actions (new chat, mode, scenes, theme) and fuzzy search over recent chats.
+ * Rendered only while open; Escape or clicking the backdrop closes it.
+ */
 export function CommandPalette({ toggleTheme, dark }: { toggleTheme: () => void; dark: boolean }) {
   const [open, setOpen] = useState(false);
   const { threads, openThread, setAmbient, ambient, setMode } = useChat();
@@ -22,7 +26,7 @@ export function CommandPalette({ toggleTheme, dark }: { toggleTheme: () => void;
   }, []);
 
   if (!open) return null;
-  const run = (fn: () => void) => () => { fn(); setOpen(false); };
+  const run = (fn: () => void) => () => { fn(); setOpen(false); };   // run an action, then close
   const item = "flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm data-[selected=true]:bg-surface-hover";
 
   return (

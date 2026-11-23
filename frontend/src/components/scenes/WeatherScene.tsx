@@ -3,6 +3,12 @@
 import type { SceneParams } from "@/lib/types";
 import { Particles } from "./Particles";
 
+/**
+ * Weather scene, driven by real Open-Meteo data for the place asked about: sky colour per condition and
+ * day/night, sun or moon, drifting clouds, rain/snow particles, lightning flashes and fog banks.
+ */
+
+/** Sky gradients per condition, for day and night. */
 const SKIES: Record<string, { day: string; night: string }> = {
   clear: { day: "linear-gradient(180deg,#2f80ed 0%,#56a8f5 45%,#a9d6ff 100%)", night: "linear-gradient(180deg,#050816 0%,#101a3d 55%,#283a6b 100%)" },
   "partly-cloudy": { day: "linear-gradient(180deg,#3b82d6 0%,#6fb0ee 50%,#bfdcf7 100%)", night: "linear-gradient(180deg,#070b1d 0%,#18234a 60%,#33436e 100%)" },
@@ -13,6 +19,7 @@ const SKIES: Record<string, { day: string; night: string }> = {
   fog: { day: "linear-gradient(180deg,#a7b0ba 0%,#c3cad1 55%,#e1e5e9 100%)", night: "linear-gradient(180deg,#22262d 0%,#3a3f48 60%,#545a64 100%)" },
 };
 
+/** One SVG cloud drifting across the screen; a negative delay starts it mid-flight so the sky isn't empty at first. */
 function Cloud({ top, scale, duration, delay, opacity, dark }: { top: string; scale: number; duration: number; delay: number; opacity: number; dark?: boolean }) {
   const fill = dark ? "#5b6678" : "#ffffff";
   return (
@@ -29,6 +36,7 @@ function Cloud({ top, scale, duration, delay, opacity, dark }: { top: string; sc
   );
 }
 
+/** The weather background for `params.condition` and `params.is_day` (defaults: partly cloudy, day). */
 export function WeatherScene({ params }: { params: SceneParams }) {
   const cond = params.condition || "partly-cloudy";
   const day = params.is_day ?? true;
@@ -66,6 +74,7 @@ export function WeatherScene({ params }: { params: SceneParams }) {
         </div>
       )}
       {Array.from({ length: cloudCount }).map((_, i) => (
+        // Deterministic pseudo-random layout (no Math.random), so the scene doesn't reshuffle on re-render.
         <Cloud key={i} top={`${6 + ((i * 13) % 46)}%`} scale={0.7 + ((i * 37) % 10) / 10} duration={70 + i * 17} delay={i * 23} opacity={darkClouds ? 0.55 : 0.85} dark={darkClouds} />
       ))}
       {(cond === "rain" || cond === "storm") && <Particles kind="rain" density={cond === "storm" ? 1.6 : 1} />}

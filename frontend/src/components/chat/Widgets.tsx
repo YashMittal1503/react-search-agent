@@ -4,6 +4,9 @@ import { Cloud, CloudFog, CloudLightning, CloudRain, CloudSun, Droplets, Moon, S
 import type { NewsWidget, WeatherWidget, Widget } from "@/lib/types";
 import { Favicon, formatDate } from "./Citation";
 
+/** Rich cards attached to an answer: live weather (Open-Meteo) and recent news articles. */
+
+/** Weather condition -> icon (clear shows a moon at night). */
 function CondIcon({ scene, day = true, className }: { scene: string; day?: boolean; className?: string }) {
   const c = className || "h-5 w-5";
   switch (scene) {
@@ -17,9 +20,11 @@ function CondIcon({ scene, day = true, className }: { scene: string; day?: boole
   }
 }
 
-const f = (c: number) => Math.round(c * 9 / 5 + 32);
+const f = (c: number) => Math.round(c * 9 / 5 + 32);   // °C -> °F
+/** US-English browsers get Fahrenheit; everyone else Celsius (data always arrives in °C). */
 const useF = () => typeof navigator !== "undefined" && navigator.language === "en-US";
 
+/** Current conditions, the next 12 hours and a 5-day strip. Times are local to the place, not the viewer. */
 function WeatherCard({ w }: { w: WeatherWidget }) {
   const fahrenheit = useF();
   const t = (c: number) => (fahrenheit ? `${f(c)}°` : `${Math.round(c)}°`);
@@ -58,6 +63,7 @@ function WeatherCard({ w }: { w: WeatherWidget }) {
       <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
         {w.daily.slice(0, 5).map((d) => (
           <div key={d.date} className="flex items-center gap-2 rounded-xl bg-surface-hover px-2.5 py-2 text-xs sm:flex-col sm:gap-1">
+            {/* Noon, so the weekday can't shift by a day across time zones. */}
             <span className="w-10 text-muted sm:w-auto">{new Date(d.date + "T12:00").toLocaleDateString(undefined, { weekday: "short" })}</span>
             <CondIcon scene={d.scene} className="h-4 w-4" />
             <span><span className="font-medium">{t(d.max_c)}</span> <span className="text-muted">{t(d.min_c)}</span></span>
@@ -70,6 +76,7 @@ function WeatherCard({ w }: { w: WeatherWidget }) {
   );
 }
 
+/** Up to 4 article cards from a news search. */
 function NewsCards({ w }: { w: NewsWidget }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2" data-testid="news-widget">
@@ -86,6 +93,7 @@ function NewsCards({ w }: { w: NewsWidget }) {
   );
 }
 
+/** Render the latest widget of each type (an agent may call the same tool more than once). */
 export function Widgets({ widgets }: { widgets: Widget[] }) {
   const weather = widgets.filter((w): w is WeatherWidget => w.type === "weather").slice(-1);
   const news = widgets.filter((w): w is NewsWidget => w.type === "news").slice(-1);

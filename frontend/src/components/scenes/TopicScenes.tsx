@@ -1,7 +1,12 @@
 "use client";
 
+/**
+ * Backgrounds for non-weather topics. Each is pure CSS/SVG (plus canvas particles where noted) and stays
+ * subtle: the chat sits on glass above it, and the e2e contrast tests check every scene in both themes.
+ */
 import { Particles } from "./Particles";
 
+/** Newsprint columns with scrolling section headlines. */
 export function NewsScene() {
   const headlines = ["BREAKING", "MARKETS", "WORLD", "TECHNOLOGY", "SCIENCE", "SPORTS", "CLIMATE", "POLITICS", "CULTURE", "HEALTH"];
   return (
@@ -21,6 +26,7 @@ export function NewsScene() {
   );
 }
 
+/** Flowing chart lines over a dark trading-floor gradient. */
 export function FinanceScene() {
   const lines = [
     { d: "M0 420 L120 380 L240 400 L360 300 L480 330 L600 240 L720 270 L840 180 L960 220 L1080 140 L1200 170 L1320 90 L1440 120", c: "#34d399" },
@@ -45,6 +51,7 @@ export function FinanceScene() {
   );
 }
 
+/** Circuit-board grid with travelling signal pulses. */
 export function TechScene() {
   return (
     <div className="absolute inset-0 overflow-hidden" data-scene="tech" style={{ background: "radial-gradient(ellipse at 30% 10%,#1b1e3d 0%,#07080f 70%)" }}>
@@ -66,6 +73,7 @@ export function TechScene() {
   );
 }
 
+/** Starfield (canvas) with nebula glows, for science and astronomy. */
 export function SpaceScene() {
   return (
     <div className="absolute inset-0 overflow-hidden" data-scene="space" style={{ background: "radial-gradient(ellipse at 20% 80%,#2a1446 0%,#0a0820 45%,#02030a 100%)" }}>
@@ -85,6 +93,7 @@ export function SpaceScene() {
   );
 }
 
+/** Stadium floodlights over a pitch. */
 export function SportsScene() {
   return (
     <div className="absolute inset-0 overflow-hidden" data-scene="sports" style={{ background: "linear-gradient(180deg,#0b1a2e 0%,#12304a 45%,#1d6b3a 46%,#15532c 100%)" }}>
@@ -107,6 +116,7 @@ export function SportsScene() {
   );
 }
 
+/** Calm, slowly breathing gradients with rising bubbles. */
 export function HealthScene() {
   return (
     <div className="absolute inset-0 overflow-hidden" data-scene="health" style={{ background: "linear-gradient(160deg,#d9f5ec 0%,#e8f4fb 55%,#f3ecfb 100%)" }}>
@@ -122,6 +132,7 @@ export function HealthScene() {
   );
 }
 
+/** Warm kitchen tones. */
 export function FoodScene() {
   return (
     <div className="absolute inset-0 overflow-hidden" data-scene="food" style={{ background: "linear-gradient(170deg,#fff1e0 0%,#ffd9b3 55%,#f9b98a 100%)" }}>
@@ -136,6 +147,7 @@ export function FoodScene() {
   );
 }
 
+/** Aurora: the neutral default for general questions and chitchat. */
 export function DefaultScene() {
   return (
     <div className="absolute inset-0 overflow-hidden" data-scene="default" style={{ background: "var(--bg)" }}>
