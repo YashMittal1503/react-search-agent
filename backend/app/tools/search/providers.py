@@ -95,8 +95,8 @@ def _ddg_timelimit(days: int | None) -> str | None:
 
 
 _DDG_SLOTS = asyncio.Semaphore(2)
-_TEXT_BACKENDS = ["duckduckgo", "yandex", "google", "yahoo", "brave", "mojeek", "auto"]
-_NEWS_BACKENDS = ["duckduckgo", "yahoo", "bing", "auto"]
+_TEXT_BACKENDS = ["duckduckgo", "startpage", "brave", "yahoo", "mojeek", "auto", "wikipedia"]
+_NEWS_BACKENDS = ["duckduckgo", "yahoo", "auto"]
 _backend_cooldown: dict[str, float] = {}
 
 
