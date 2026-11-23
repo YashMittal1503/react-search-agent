@@ -11,7 +11,8 @@ Works anywhere a chat model is expected (LangGraph, ``create_agent``, deepagents
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from typing import Any
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel

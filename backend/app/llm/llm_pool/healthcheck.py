@@ -67,6 +67,10 @@ async def main_async(config: str, tier: str | None, tools: bool) -> int:
 
 
 def main() -> None:
+    import sys
+
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")   # Windows consoles choke on emoji in model replies
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="models.yaml")
     ap.add_argument("--tier")

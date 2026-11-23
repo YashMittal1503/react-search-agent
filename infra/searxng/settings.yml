@@ -1,0 +1,12 @@
+# Local SearXNG metasearch for the agent (free, no key). Only for local/private use.
+use_default_settings: true
+server:
+  secret_key: "local-dev-only-change-me"
+  limiter: false
+  image_proxy: false
+  public_instance: false
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json

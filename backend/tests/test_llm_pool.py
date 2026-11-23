@@ -5,7 +5,15 @@ import time
 
 import pytest
 
-from app.llm.llm_pool import ErrorKind, LLMRouter, PoolConfig, classify_error, load_keys, parse_duration, retry_after_seconds
+from app.llm.llm_pool import (
+    ErrorKind,
+    LLMRouter,
+    PoolConfig,
+    classify_error,
+    load_keys,
+    parse_duration,
+    retry_after_seconds,
+)
 from app.llm.llm_pool.router import AllProvidersFailed
 
 
@@ -142,3 +150,17 @@ def test_stream_fails_over_before_first_token():
         return [x async for x in r.run_stream("t", fn)]
 
     assert asyncio.run(collect()) == ["hi"]
+
+
+def test_overloaded_model_skips_remaining_keys():
+    r = router()
+    calls = []
+
+    async def fn(a):
+        calls.append(a.label())
+        if a.target.model == "m1":
+            raise FakeErr("This model is currently experiencing high demand", 503)
+        return a.target.id
+
+    assert asyncio.run(r.run("t", fn)) == "groq:m2"
+    assert sum("groq:m1" in c for c in calls) == 1    # second key not wasted on an overloaded model

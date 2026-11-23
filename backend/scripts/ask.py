@@ -1,0 +1,42 @@
+"""Ask the agent from the terminal and watch the event stream.
+
+    uv run python -m scripts.ask "What's the weather in Mumbai today?" [--mode quick|deep] [--tz Asia/Kolkata]
+"""
+
+import argparse
+import asyncio
+import json
+import sys
+
+from app.agent.runner import run_turn
+
+
+async def main(q: str, mode: str, tz: str, raw: bool) -> None:
+    async for ev in run_turn(q, None, mode, tz):
+        name, data = ev["event"], ev["data"]
+        if raw:
+            print(name, json.dumps(data, default=str)[:300])
+        elif name == "token":
+            sys.stdout.write(data["text"])
+            sys.stdout.flush()
+        elif name == "step":
+            print(f"  · {data.get('kind', '')} {data.get('label', '')} [{data.get('status')}] {data.get('tier', '') or data.get('provider', '')}")
+        elif name in ("route", "scene", "plan", "notice", "error"):
+            print(f"  [{name}] {json.dumps(data, default=str)[:240]}")
+        elif name == "done":
+            print("\n\n--- sources ---")
+            for s in data["sources"]:
+                print(f"[{s['n']}] {s['title'][:70]} — {s['url']}")
+            print("usage:", data["usage"], "| invalid citations removed:", data["invalid_citations"])
+
+
+if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("question")
+    ap.add_argument("--mode", default="auto")
+    ap.add_argument("--tz", default="Asia/Kolkata")
+    ap.add_argument("--raw", action="store_true")
+    a = ap.parse_args()
+    asyncio.run(main(a.question, a.mode, a.tz, a.raw))

@@ -47,7 +47,7 @@ class PoolConfig:
     providers: dict[str, ProviderSpec]
     tiers: dict[str, list[Target]]
     max_wait_seconds: float = 20.0      # wait for a cooling key when nothing else is left
-    max_attempts: int = 14              # per call, across all tiers and keys
+    max_attempts: int = 20              # per call, across all tiers and keys
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PoolConfig":
@@ -78,7 +78,7 @@ class PoolConfig:
             providers=providers,
             tiers=tiers,
             max_wait_seconds=float(data.get("max_wait_seconds", 20.0)),
-            max_attempts=int(data.get("max_attempts", 14)),
+            max_attempts=int(data.get("max_attempts", 20)),
         )
 
     @classmethod

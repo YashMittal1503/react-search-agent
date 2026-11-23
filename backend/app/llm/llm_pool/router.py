@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, TypeVar
 
 from .config import PoolConfig, ProviderSpec, Target
-from .errors import ErrorKind, classify_error, retry_after_seconds
+from .errors import ErrorKind, classify_error, retry_after_seconds, status_code_of
 from .keys import load_keys
 from .pool import KeySlot, ProviderKeyPool
 
@@ -121,7 +121,14 @@ class LLMRouter:
         elif kind is ErrorKind.AUTH:
             pool.cool_down(key, None, 3600.0, "auth failed")
         elif kind is ErrorKind.TRANSIENT:
-            pool.cool_down(key, t.model, 8.0, "transient error")
+            msg = str(err).lower()
+            if status_code_of(err) in (502, 503, 529) or any(w in msg for w in ("overloaded", "high demand", "unavailable")):
+                # the *model* is overloaded for everyone: other keys won't help, move to the next target
+                skip.add(attempt.index)
+                for slot in pool.slots:
+                    pool.cool_down(slot.key, t.model, 30.0, "model overloaded")
+            else:
+                pool.cool_down(key, t.model, 8.0, "transient error")
         logger.warning("llm attempt failed: %s -> %s: %s", attempt.label(), kind.value, str(err)[:300])
         return kind
 
@@ -224,7 +231,7 @@ class LLMRouter:
         async def call(a: Attempt):
             params = {**a.target.params, **kwargs}
             resp = await self.openai_client(a).chat.completions.create(model=a.target.model, messages=messages, **params)
-            setattr(resp, "_llm_pool_target", a.target.id)
+            resp._llm_pool_target = a.target.id
             return resp
 
         return await self.run(tier, call)

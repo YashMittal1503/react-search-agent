@@ -11,7 +11,7 @@
 #   Several keys from ONE account share that account's quota; real headroom comes from more providers.
 
 max_wait_seconds: 20     # wait this long for a cooling key before giving up
-max_attempts: 14         # attempts per call across all targets and keys
+max_attempts: 20         # attempts per call across all targets and keys
 
 providers:
   openrouter:
@@ -20,29 +20,36 @@ providers:
       X-Title: "react-search-agent"
 
 tiers:
-  fast:                     # routing, classification, short extraction
+  fast:                     # routing, classification, follow-ups (short prompts)
     - groq:qwen/qwen3.8-27b
     - groq:openai/gpt-oss-120b
+    - gemini:gemini-3.5-flash-lite
     - mistral:ministral-3b-2512
-    - gemini:gemini-flash-latest
     - nvidia:minimaxai/minimax-m3.1-flash
-    - openrouter:meta-llama/llama-3.3-70b-instruct:free
+    - openrouter:google/gemma-4-31b-it:free
 
-  agent:                    # tool calling
+  agent:                    # tool calling (ReAct + deep research)
     - groq:openai/gpt-oss-120b
-    - gemini:gemini-flash-latest
     - groq:qwen/qwen3.8-27b
     - nvidia:nvidia/nemotron-3-ultra-550b-a55b
+    - gemini:gemini-3.8-flash
+    - gemini:gemini-3.5-flash
+    - nvidia:minimaxai/minimax-m3.1-flash
     - mistral:mistral-small-latest
-    - openrouter:meta-llama/llama-3.3-70b-instruct:free
+    - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
 
-  long_context:             # big inputs (1M-token Gemini Flash first)
-    - gemini:gemini-flash-latest
-    - gemini:gemini-3.6-flash
-    - groq:openai/gpt-oss-120b
+  long_context:             # answer synthesis over many sources (1M-token Gemini first)
+    - gemini:gemini-3.8-flash
     - nvidia:nvidia/nemotron-3-ultra-550b-a55b
+    - groq:openai/gpt-oss-120b
+    - gemini:gemini-3.5-flash
+    - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
+    - nvidia:minimaxai/minimax-m3.1-flash
+    - groq:qwen/qwen3.8-27b
+    - gemini:gemini-3.5-flash-lite
 
   judge:                    # evals: a different family from the agent's primary model
-    - gemini:gemini-flash-latest
+    - gemini:gemini-3.5-flash
+    - gemini:gemini-3.5-flash-lite
     - mistral:mistral-small-latest
-    - groq:qwen/qwen3.8-27b
+    - nvidia:minimaxai/minimax-m3.1-flash
