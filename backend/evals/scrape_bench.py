@@ -47,7 +47,7 @@ URLS: dict[str, list[str]] = {
     ],
     "pdf": [
         "https://arxiv.org/pdf/2210.03629",
-        "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+        "https://arxiv.org/pdf/1706.03762",
     ],
     "forum_video": [
         "https://www.reddit.com/r/Python/comments/1b5pz1l/what_are_some_good_python_projects_for_beginners/",

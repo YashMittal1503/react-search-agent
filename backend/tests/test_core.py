@@ -60,7 +60,7 @@ def test_quality_detects_bot_walls_and_js_shells():
     assert quality("Please enable JavaScript to continue.") == "blocked"
     assert quality("Just a moment... Checking your browser before accessing.") == "blocked"
     assert quality("short") == "thin"
-    assert quality(("Real article sentence with content. " * 40)) == "ok"
+    assert quality("Real article sentence with content. " * 40) == "ok"
 
 
 def test_select_relevant_keeps_lead_and_relevant_chunks_within_budget():
