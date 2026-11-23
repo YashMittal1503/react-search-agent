@@ -1,0 +1,57 @@
+[project]
+name = "search-agent"
+version = "0.1.0"
+description = "ReAct + deep-research web search agent on free LLM tiers"
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "ddgs>=9.16.1",
+    "deepagents>=0.7.41",
+    "diskcache>=5.6.3",
+    "fastapi>=0.115",
+    "feedparser>=6.0.14",
+    "httpx[http2]>=0.28.1",
+    "langchain>=1.0",
+    "langchain-core>=1.0",
+    "langchain-openai>=1.0",
+    "langgraph>=1.0",
+    "langgraph-checkpoint-sqlite>=3.1.3",
+    "langsmith>=0.16.0",
+    "logfire>=6.0.0",
+    "openai>=1.50",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.16.3",
+    "pymupdf4llm>=2.1",
+    "python-dotenv>=1.2.4",
+    "pyyaml>=6.0.4",
+    "rank-bm25>=0.2.2",
+    "slowapi>=0.1.10",
+    "sqlalchemy[asyncio]>=2.1.9",
+    "sse-starlette>=3.7.1",
+    "tldextract>=5.4.0",
+    "trafilatura>=2.3.1",
+    "uvicorn[standard]>=0.54.0",
+    "youtube-transcript-api>=1.2.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "respx>=0.23.1",
+    "ruff>=0.17.6",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["evals/reports"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "B008"]

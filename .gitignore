@@ -1,0 +1,35 @@
+# secrets
+.env
+.env.*
+!.env.example
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+# data / caches
+backend/data/
+*.sqlite
+*.sqlite3
+*.db
+backend/evals/cache/
+backend/evals/reports/*.json
+# node
+node_modules/
+.next/
+out/
+frontend/test-results/
+frontend/playwright-report/
+*.tsbuildinfo
+next-env.d.ts
+# os / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# personal documents kept in the folder but never committed
+/*.pdf

@@ -1,0 +1,48 @@
+# llm_pool configuration. Tiers are ordered fallback chains of "provider:model".
+# A provider without keys in the environment is skipped automatically.
+# Check what is alive with:  python -m llm_pool.healthcheck --config models.yaml [--tools]
+#
+# Free-tier notes (Nov 2026):
+#   groq        30 RPM, 1K RPD, 8K TPM, 200K TPD *per model*. gpt-oss-20b stalls streams; compound-mini retired.
+#   nvidia      ~40 RPM, prototyping only. nemotron-3-ultra / minimax-m3.1-flash are live; gpt-oss-120b retired.
+#   mistral     free "Experiment" mode, per-project caps.
+#   gemini      per-project caps shown in AI Studio; free-tier prompts may be used for training.
+#   openrouter  ":free" models: 20 RPM, 50 RPD (1K after a one-time $10). Failed calls count too.
+#   Several keys from ONE account share that account's quota; real headroom comes from more providers.
+
+max_wait_seconds: 20     # wait this long for a cooling key before giving up
+max_attempts: 14         # attempts per call across all targets and keys
+
+providers:
+  openrouter:
+    headers:
+      HTTP-Referer: "https://github.com/YashMittal1503/react-search-agent"
+      X-Title: "react-search-agent"
+
+tiers:
+  fast:                     # routing, classification, short extraction
+    - groq:qwen/qwen3.8-27b
+    - groq:openai/gpt-oss-120b
+    - mistral:ministral-3b-2512
+    - gemini:gemini-flash-latest
+    - nvidia:minimaxai/minimax-m3.1-flash
+    - openrouter:meta-llama/llama-3.3-70b-instruct:free
+
+  agent:                    # tool calling
+    - groq:openai/gpt-oss-120b
+    - gemini:gemini-flash-latest
+    - groq:qwen/qwen3.8-27b
+    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
+    - mistral:mistral-small-latest
+    - openrouter:meta-llama/llama-3.3-70b-instruct:free
+
+  long_context:             # big inputs (1M-token Gemini Flash first)
+    - gemini:gemini-flash-latest
+    - gemini:gemini-3.6-flash
+    - groq:openai/gpt-oss-120b
+    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
+
+  judge:                    # evals: a different family from the agent's primary model
+    - gemini:gemini-flash-latest
+    - mistral:mistral-small-latest
+    - groq:qwen/qwen3.8-27b
