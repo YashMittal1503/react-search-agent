@@ -1,5 +1,5 @@
 // Capture README screenshots from a running app (default http://localhost:3000, real backend on :8000).
-//   node e2e/screenshots.mjs [threadId...]
+//   CLIENT_ID=<your rsa-client-id> node e2e/screenshots.mjs [threadId...]
 import { chromium } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
@@ -18,7 +18,10 @@ const shots = [
 const browser = await chromium.launch();
 for (const s of shots) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme: s.theme });
-  await ctx.addInitScript((t) => localStorage.setItem("rsa-theme", t), s.theme);
+  await ctx.addInitScript(([t, id]) => {
+    localStorage.setItem("rsa-theme", t);
+    if (id) localStorage.setItem("rsa-client-id", id); // CLIENT_ID=... to see your own threads
+  }, [s.theme, process.env.CLIENT_ID || ""]);
   const page = await ctx.newPage();
   await page.goto(BASE + s.path);
   await page.waitForTimeout(s.path.includes("?t=") ? 3500 : 2000);
