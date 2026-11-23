@@ -9,6 +9,7 @@ import json
 import sys
 
 from app.agent.runner import run_turn
+from app.observability import flush_traces, setup_observability
 
 
 async def main(q: str, mode: str, tz: str, raw: bool) -> None:
@@ -39,4 +40,6 @@ if __name__ == "__main__":
     ap.add_argument("--tz", default="Asia/Kolkata")
     ap.add_argument("--raw", action="store_true")
     a = ap.parse_args()
+    setup_observability()
     asyncio.run(main(a.question, a.mode, a.tz, a.raw))
+    flush_traces()

@@ -17,7 +17,7 @@ from .agent.runner import close_graph, init_graph, run_turn
 from .api import limits
 from .api.suggestions import SUGGESTIONS
 from .llm import get_router
-from .observability import setup_observability
+from .observability import flush_traces, setup_observability
 from .settings import get_settings
 from .store import db
 
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     await init_graph()
     yield
     await close_graph()
+    flush_traces()
 
 
 app = FastAPI(title="react-search-agent", version="0.1.0", lifespan=lifespan)

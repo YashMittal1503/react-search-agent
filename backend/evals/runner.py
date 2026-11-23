@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from app.agent.runner import run_turn
+from app.observability import flush_traces, setup_observability
 from app.settings import get_settings
 
 from . import scoring
@@ -169,5 +170,7 @@ def _langsmith_feedback(r: dict) -> None:
 
 def main_run(args) -> None:
     ids = [x.strip() for x in args.ids.split(",")] if args.ids else None
+    setup_observability()
     path = asyncio.run(run_suite(args.suite, args.split, ids, not args.no_judge, args.langsmith))
+    flush_traces()
     print("report:", path)
