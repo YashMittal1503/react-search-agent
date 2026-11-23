@@ -1,4 +1,11 @@
-"""Logfire (app/HTTP spans) + LangSmith (agent traces). Both optional, both free tiers."""
+"""Tracing setup: Logfire for app/HTTP spans, LangSmith for agent traces. Both optional, both have free tiers.
+
+* Logfire records FastAPI requests, outgoing httpx calls (search, fetch, LLM APIs) and one span per LLM attempt
+  (emitted by ``llm_pool``). Without ``LOGFIRE_TOKEN`` nothing is sent.
+* LangSmith records every LangGraph/LangChain run (router, agents, tools, writer) as a trace tree. LangChain reads
+  its ``LANGSMITH_*`` settings from ``os.environ``, so :func:`_setup_langsmith` makes sure the ``.env`` values are
+  there and switches tracing on when a key is present.
+"""
 
 import logging
 import os
@@ -6,10 +13,14 @@ import os
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
-_configured = False
+_configured = False    # configure once per process, even if called from several entry points
 
 
 def setup_observability(app=None) -> None:
+    """Configure Logfire and LangSmith; if a FastAPI ``app`` is given, also instrument its routes.
+
+    Safe to call more than once and safe without any tokens (everything degrades to no-ops).
+    """
     global _configured
     s = get_settings()
     if not _configured:
@@ -24,7 +35,7 @@ def setup_observability(app=None) -> None:
                 console=False,
                 scrubbing=logfire.ScrubbingOptions(extra_patterns=["api_key", "authorization"]),
             )
-            logfire.instrument_httpx(capture_all=False)
+            logfire.instrument_httpx(capture_all=False)   # spans for every outgoing request, without bodies
         except Exception as err:  # pragma: no cover
             logger.warning("logfire setup skipped: %s", err)
         _setup_langsmith(s)

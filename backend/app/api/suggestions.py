@@ -1,5 +1,7 @@
 """Pre-loaded questions for the empty state; each one previews its scene in the UI."""
 
+# category: label on the card · scene/params: which background the card previews on hover
+# icon: lucide icon name (mapped in frontend/src/components/chat/EmptyState.tsx) · question: sent when clicked
 SUGGESTIONS = [
     {"category": "Weather", "scene": "weather", "icon": "cloud-sun", "question": "What's the weather in Mumbai today?"},
     {"category": "Weather", "scene": "weather", "icon": "umbrella", "question": "Will it rain in London this weekend?"},

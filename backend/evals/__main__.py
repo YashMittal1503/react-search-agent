@@ -1,4 +1,10 @@
-"""uv run python -m evals {validate|run|scrape-bench|fixtures}"""
+"""Eval command line.
+
+    uv run python -m evals validate        # parse the golden set, print counts (no LLM calls)
+    uv run python -m evals run [...]       # run items against the live agent (see `run --help`)
+    uv run python -m evals scrape-bench    # fetch-waterfall benchmark on real URLs
+    uv run python -m evals fixtures        # serve the fixture site on :8765 for manual poking
+"""
 
 import argparse
 import logging
@@ -6,6 +12,7 @@ import sys
 
 
 def main() -> None:
+    """Parse arguments and dispatch to the chosen command (imports are lazy to keep `validate` fast)."""
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
     logging.basicConfig(level=logging.WARNING)
@@ -31,6 +38,9 @@ def main() -> None:
         items = load(DATA, "http://127.0.0.1:8765")
         print(f"{len(items)} items OK · smoke {sum(i.smoke for i in items)} · holdout {sum(i.split == 'holdout' for i in items)}")
         print(dict(Counter(i.category for i in items)))
+        turns = [t for i in items for t in i.all_turns()]
+        print(f"turns {len(turns)} · routes {dict(Counter(t.expected_mode for t in turns))} · "
+              f"difficulty {dict(Counter(i.difficulty for i in items))}")
     elif args.cmd == "run":
         from .runner import main_run
 

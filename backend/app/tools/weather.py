@@ -1,5 +1,8 @@
 """Weather via Open-Meteo (free, no key): geocoding + current/hourly/daily forecast.
-Also yields the scene parameters the UI uses (condition, day/night at the location)."""
+
+Also yields the scene parameters the UI uses (condition, day/night at the location), which is how the
+background shows rain over London or night over Mumbai: it's driven by real data, not by keywords.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +28,11 @@ WMO = {
 
 
 async def geocode(name: str, client: httpx.AsyncClient) -> dict[str, Any] | None:
+    """Resolve a place name to Open-Meteo's best match (lat/lon, country, region), or ``None``.
+
+    Tries the full name, then just the part before the first comma. With "City, Region" input it prefers the
+    candidate whose country or state appears in the input, so "Paris, Texas" doesn't resolve to France.
+    """
     variants = [name, name.split(",")[0].strip()]
     for q in dict.fromkeys(v for v in variants if v):
         r = await client.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": q, "count": 5, "format": "json"})
@@ -41,6 +49,12 @@ async def geocode(name: str, client: httpx.AsyncClient) -> dict[str, Any] | None
 
 
 async def get_weather(location: str, days: int = 5) -> dict[str, Any]:
+    """Current conditions, the next 24 hours and a ``days``-day forecast (1-14) for ``location``.
+
+    Returns:
+        A dict with ``location``, ``current``, ``hourly``, ``daily``, ``scene`` (for the UI background) and
+        ``source_url`` (what the answer cites), or ``{"error": ...}`` if the place is unknown. Cached 10 minutes.
+    """
     days = max(1, min(int(days or 5), 14))
     key = cache.make_key("weather", location.lower(), days)
     if hit := cache.get(key):
@@ -50,6 +64,7 @@ async def get_weather(location: str, days: int = 5) -> dict[str, Any]:
         if not place:
             return {"error": f"Could not find a place called {location!r}."}
         params = {
+            # timezone=auto: times come back in the *place's* local time, which is what "tonight" means there.
             "latitude": place["latitude"], "longitude": place["longitude"], "timezone": "auto", "forecast_days": days,
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,weather_code,wind_speed_10m,wind_direction_10m,cloud_cover",
             "hourly": "temperature_2m,precipitation_probability,weather_code",
@@ -64,6 +79,7 @@ async def get_weather(location: str, days: int = 5) -> dict[str, Any]:
     hourly = data.get("hourly", {})
     now_iso = cur.get("time", "")
     times = hourly.get("time", [])
+    # Hourly data starts at midnight; skip to the current hour (ISO strings compare correctly up to "YYYY-MM-DDTHH").
     start = next((i for i, t in enumerate(times) if t >= now_iso[:13]), 0)
     daily = data.get("daily", {})
     result = {

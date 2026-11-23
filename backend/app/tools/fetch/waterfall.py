@@ -27,37 +27,44 @@ from .handlers import SITE_HANDLERS, pdf_from_bytes
 
 logger = logging.getLogger(__name__)
 
-TIERS = ["site_api", "http", "browser", "jina", "wayback"]
-MAX_BYTES = 6 * 1024 * 1024
+TIERS = ["site_api", "http", "browser", "jina", "wayback"]   # default order (per-domain stats can reorder it)
+MAX_BYTES = 6 * 1024 * 1024                                  # stop downloading after 6 MB (huge PDFs, media)
 
 
 @dataclass
 class FetchResult:
+    """Outcome of fetching one URL. ``ok`` means some text came back; ``status`` says whether it's usable."""
+
     url: str
     ok: bool
-    text: str = ""
+    text: str = ""            # page content as markdown
     title: str = ""
     published: str | None = None
-    tier: str = ""
+    tier: str = ""            # which tier produced it, e.g. "http", "http:pdf", "site_api:wikipedia", "jina"
     status: str = ""          # ok | thin | blocked | error | unsupported
     error: str = ""
-    elapsed: float = 0.0
-    tried: list | None = None
+    elapsed: float = 0.0      # seconds for the whole waterfall
+    tried: list | None = None # "tier:status" for every tier attempted, in order (shown in timeline tooltips)
 
     def to_dict(self) -> dict:
+        """Plain dict (for the cache)."""
         return asdict(self)
 
 
 # ── per-domain learning + politeness ────────────────────────────────────────
+# domain -> tier -> [successes, failures], persisted in the disk cache for 30 days.
 _STATS_KEY = "fetch-domain-stats-v1"
+# Politeness: at most 2 concurrent fetches per domain, however many the agent requests at once.
 _domain_locks: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(2))
 
 
 def _stats() -> dict:
+    """All per-domain tier statistics."""
     return cache.get(_STATS_KEY) or {}
 
 
 def _record(domain: str, tier: str, ok: bool) -> None:
+    """Count one success or failure of ``tier`` on ``domain``."""
     stats = _stats()
     d = stats.setdefault(domain, {})
     s, f = d.get(tier, [0, 0])
@@ -79,6 +86,7 @@ def tier_order(domain: str) -> list[str]:
 
 # ── tiers ───────────────────────────────────────────────────────────────────
 def _headers() -> dict:
+    """Browser-like request headers with an honest User-Agent that names the project."""
     return {
         "User-Agent": get_settings().user_agent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf;q=0.8,*/*;q=0.7",
@@ -87,6 +95,10 @@ def _headers() -> dict:
 
 
 async def _http(url: str, client: httpx.AsyncClient) -> FetchResult:
+    """Direct GET (HTTP/2): HTML -> trafilatura markdown, PDF -> pymupdf4llm, plain text as is.
+
+    The body is streamed and capped at ``MAX_BYTES``. Binary content types are reported as ``unsupported``.
+    """
     async with client.stream("GET", url) as r:
         if r.status_code >= 400:
             return FetchResult(url, False, tier="http", status="blocked" if r.status_code in (401, 403, 429, 451) else "error",
@@ -97,6 +109,7 @@ async def _http(url: str, client: httpx.AsyncClient) -> FetchResult:
             body += part
             if len(body) > MAX_BYTES:
                 break
+    # Servers often mislabel PDFs, so also trust the extension and the "%PDF-" magic bytes.
     if "pdf" in ctype or url.lower().endswith(".pdf") or body[:5] == b"%PDF-":
         res = await pdf_from_bytes(body)
         if not res:
@@ -113,6 +126,11 @@ async def _http(url: str, client: httpx.AsyncClient) -> FetchResult:
 
 
 async def _browser(url: str) -> FetchResult:
+    """Render the page in headless Chromium via crawl4ai (optional tier, for JS-rendered sites).
+
+    Disabled unless ``ENABLE_BROWSER_FETCH=true`` and crawl4ai is installed; then it reports ``unsupported`` and the
+    waterfall skips it without counting a failure.
+    """
     if not get_settings().enable_browser_fetch:
         return FetchResult(url, False, tier="browser", status="unsupported", error="browser tier disabled")
     try:
@@ -127,13 +145,14 @@ async def _browser(url: str) -> FetchResult:
         return FetchResult(url, False, tier="browser", status="error", error=(r.error_message or "")[:200])
     html = r.html or ""
     text, title, date = html_to_markdown(html, url) if html else ("", "", None)
-    if len(text) < 300:
+    if len(text) < 300:          # trafilatura found little: fall back to crawl4ai's own markdown conversion
         md = r.markdown
         text = (getattr(md, "fit_markdown", None) or getattr(md, "raw_markdown", None) or str(md or "")).strip()
     return FetchResult(url, True, text=text, title=title, published=date, tier="browser", status=quality(text))
 
 
 async def _jina(url: str, client: httpx.AsyncClient) -> FetchResult:
+    """Jina Reader (``r.jina.ai/<url>``): a public service that renders a page and returns markdown."""
     headers = {"X-Return-Format": "markdown", "Accept": "text/plain"}
     if key := get_settings().jina_api_key:
         headers["Authorization"] = f"Bearer {key}"
@@ -142,6 +161,7 @@ async def _jina(url: str, client: httpx.AsyncClient) -> FetchResult:
         return FetchResult(url, False, tier="jina", status="error", error=f"HTTP {r.status_code}")
     text = r.text
     title = ""
+    # Jina's response starts with "Title: ...", "URL Source: ...", then "Markdown Content:" and the page.
     if text.startswith("Title:"):
         title = text.split("\n", 1)[0][6:].strip()
     if "Markdown Content:" in text:
@@ -151,6 +171,7 @@ async def _jina(url: str, client: httpx.AsyncClient) -> FetchResult:
 
 
 async def _wayback(url: str, client: httpx.AsyncClient) -> FetchResult:
+    """The closest Internet Archive snapshot, labelled with its date so the model knows it may be outdated."""
     r = await client.get("https://archive.org/wayback/available", params={"url": url}, timeout=15)
     snap = (r.json().get("archived_snapshots") or {}).get("closest") if r.status_code == 200 else None
     if not snap or not snap.get("available"):
@@ -165,6 +186,7 @@ async def _wayback(url: str, client: httpx.AsyncClient) -> FetchResult:
 
 
 async def _site_api(url: str, client: httpx.AsyncClient) -> FetchResult:
+    """Try each site-specific API handler; ``unsupported`` when none of them handles this URL."""
     for handler in SITE_HANDLERS:
         try:
             res = await handler(url, client)
@@ -179,7 +201,12 @@ async def _site_api(url: str, client: httpx.AsyncClient) -> FetchResult:
 
 # ── SSRF guard ──────────────────────────────────────────────────────────────
 def is_private_url(url: str) -> bool:
-    """True for localhost / private / link-local targets (incl. hostnames that resolve to them)."""
+    """True for localhost / private / link-local targets (incl. hostnames that resolve to them).
+
+    The agent fetches URLs that came from search results or the user, so without this a prompt could make the
+    server fetch internal addresses (cloud metadata at 169.254.169.254, a router admin page...). Hostnames that
+    don't resolve are not private; the fetch will just fail normally.
+    """
     import ipaddress
     import socket
     from urllib.parse import urlsplit
@@ -199,6 +226,12 @@ def is_private_url(url: str) -> bool:
 
 # ── orchestrator ────────────────────────────────────────────────────────────
 async def fetch(url: str, use_cache: bool = True) -> FetchResult:
+    """Fetch ``url`` through the waterfall and return the best result.
+
+    Stops at the first tier whose text passes the quality check. If no tier gives ``ok`` text, the longest
+    ``thin`` result is returned (some text beats none); otherwise a structured failure listing every tier tried,
+    so the agent can say "blocked" and choose another source. Successful results are cached for 6 hours.
+    """
     t0 = time.perf_counter()
     if not url.lower().startswith(("http://", "https://")):
         return FetchResult(url, False, status="unsupported", error="only http(s) URLs can be fetched")
@@ -220,7 +253,7 @@ async def fetch(url: str, use_cache: bool = True) -> FetchResult:
             try:
                 if tier == "site_api":
                     res = await _site_api(url, client)
-                    if res.status == "unsupported":
+                    if res.status == "unsupported":    # not a Wikipedia/YouTube/... URL: not a failure
                         continue
                 elif tier == "http":
                     res = await _http(url, client)
@@ -236,7 +269,7 @@ async def fetch(url: str, use_cache: bool = True) -> FetchResult:
                 res = FetchResult(url, False, tier=tier, status="error", error=f"{type(err).__name__}: {str(err)[:160]}")
             tried.append(f"{res.tier}:{res.status or 'error'}")
             good = res.ok and res.status == "ok"
-            if tier != "site_api" or res.ok:
+            if tier != "site_api" or res.ok:   # a site API "not applicable" shouldn't count against the domain
                 _record(domain, tier, good)
             if good:
                 best = res

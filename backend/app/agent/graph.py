@@ -35,18 +35,30 @@ logger = logging.getLogger(__name__)
 
 
 class State(TypedDict, total=False):
-    messages: Annotated[list[BaseMessage], add_messages]
-    question: str
-    route: dict
-    notes: str
-    answer: str
+    """The graph state, checkpointed per thread.
+
+    Only ``messages`` accumulates across turns (``add_messages`` appends); the other keys are overwritten each
+    turn and describe the current turn only.
+    """
+
+    messages: Annotated[list[BaseMessage], add_messages]   # the whole conversation: HumanMessage / AIMessage
+    question: str                                          # this turn's user message
+    route: dict                                            # router output + scene for this turn
+    notes: str                                             # the research agent's final notes for the writer
+    answer: str                                            # the final, citation-checked answer
 
 
 def _today(run: RunContext) -> str:
+    """Current date/time in the user's timezone, e.g. 'Tuesday, 24 November 2026, 18:05' (put into prompts)."""
     return run.now.strftime("%A, %d %B %Y, %H:%M")
 
 
 def _history(messages: list[BaseMessage], limit: int = 6, chars: int = 600) -> str:
+    """Render the last ``limit`` messages as 'User: ... / Assistant: ...' lines, each cut to ``chars`` characters.
+
+    Keeps prompts small (free tiers have tight token-per-minute limits) while still letting the router and the
+    agents resolve follow-ups such as "and tomorrow?".
+    """
     lines = []
     for m in messages[-limit:]:
         role = "User" if isinstance(m, HumanMessage) else "Assistant"
@@ -55,6 +67,7 @@ def _history(messages: list[BaseMessage], limit: int = 6, chars: int = 600) -> s
 
 
 def _text(msg: BaseMessage) -> str:
+    """A message's text, whether its content is a plain string or a list of content blocks (Gemini returns lists)."""
     c = msg.content
     if isinstance(c, list):
         return "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in c)
@@ -63,10 +76,15 @@ def _text(msg: BaseMessage) -> str:
 
 # ── nodes ───────────────────────────────────────────────────────────────────
 async def route_node(state: State, config: RunnableConfig) -> dict:
+    """Classify the question (intent, quick/deep, location, freshness) and pick the background scene.
+
+    Emits ``route`` and ``scene`` events right away so the UI can switch the scene before research starts.
+    """
     run = current_run()
-    prior = state.get("messages", [])[:-1]
+    prior = state.get("messages", [])[:-1]          # everything before this turn's question
     run.step("think", "Understanding the question")
     route: Route = await route_question(state["question"], _history(prior), _today(run), run.timezone, config)
+    # The UI's Quick/Deep toggle overrides the router's choice (but chitchat never triggers research).
     if run.mode in ("quick", "deep") and route.intent != "chitchat":
         route.mode = run.mode
     scene = scene_for(route)
@@ -77,6 +95,7 @@ async def route_node(state: State, config: RunnableConfig) -> dict:
 
 
 def _pick(state: State) -> str:
+    """Conditional edge after routing: chitchat skips research; otherwise quick or deep research."""
     r = state.get("route", {})
     if r.get("intent") == "chitchat":
         return "synthesize"
@@ -84,6 +103,11 @@ def _pick(state: State) -> str:
 
 
 def _research_input(state: State) -> list:
+    """Build the single message a research agent starts from.
+
+    It contains the question plus the router's hints (a standalone rewrite of the query, the location, how fresh
+    sources should be) and a short transcript of earlier turns, so follow-ups are researched in context.
+    """
     r = state.get("route", {})
     hints = []
     if r.get("search_query") and r["search_query"] != state["question"]:
@@ -110,12 +134,18 @@ def _trim_context(trigger_tokens: int) -> ContextEditingMiddleware:
 
 
 async def quick_research(state: State, config: RunnableConfig) -> dict:
+    """Quick path: a plain ReAct agent (LangChain ``create_agent``) with a small model-call budget.
+
+    Good for facts, weather and news: 1-3 searches or page reads. Its tools register every URL they see in the
+    SourceRegistry; the agent's final message becomes ``notes`` for the writer.
+    """
     run = current_run()
     s = get_settings()
     agent = create_agent(
         model=chat_model("agent", temperature=0.1),
         tools=QUICK_TOOLS,
         system_prompt=prompts.QUICK.format(today=_today(run), tz=run.timezone, locale=run.locale, max_calls=s.quick_max_model_calls),
+        # Stop (rather than error) after N model calls; trim old tool outputs to stay under Groq's 8K TPM.
         middleware=[ModelCallLimitMiddleware(run_limit=s.quick_max_model_calls, exit_behavior="end"), _trim_context(4500)],
         name="quick_research",
     )
@@ -124,7 +154,13 @@ async def quick_research(state: State, config: RunnableConfig) -> dict:
 
 
 async def deep_research(state: State, config: RunnableConfig) -> dict:
-    from deepagents import create_deep_agent
+    """Deep path: a ``deepagents`` agent that plans with todos and delegates sub-questions to a subagent.
+
+    The planner writes a todo list (streamed to the UI as the plan), may keep notes in deepagents' virtual
+    filesystem, and hands self-contained sub-questions to ``web-researcher``. Budgets (model calls, searches,
+    wall-clock timeout) keep one run within free-tier quotas.
+    """
+    from deepagents import create_deep_agent  # imported lazily: heavy import, only needed for deep runs
 
     run = current_run()
     s = get_settings()
@@ -155,13 +191,21 @@ async def deep_research(state: State, config: RunnableConfig) -> dict:
 
 
 async def _run_agent(agent, messages: list, config: RunnableConfig, timeout: float, track_todos: bool = False) -> str:
-    """Stream the agent's state so plan (todos) updates reach the UI; return its final notes.
-    On timeout or failure we keep whatever sources were gathered and let the writer work with them."""
+    """Run a research agent to completion (or until ``timeout``) and return its notes for the writer.
+
+    The agent's state is streamed (``stream_mode="values"``) so todo-list changes reach the UI as ``plan`` events
+    while it works. On timeout or failure nothing is lost: every source the tools found is already in the
+    SourceRegistry, and the writer answers from whatever was gathered.
+
+    Returns:
+        The last plain AI message (no tool calls), plus up to 4 notes files from deepagents' virtual filesystem.
+    """
     run = current_run()
-    last: dict[str, Any] = {}
-    todos_seen: list = []
+    last: dict[str, Any] = {}       # most recent full agent state
+    todos_seen: list = []           # last plan sent to the UI (only re-emit when it changes)
 
     async def consume():
+        """Drain the agent's state stream, forwarding plan changes."""
         nonlocal last, todos_seen
         async for state in agent.astream({"messages": messages}, config={**config, "recursion_limit": 60}, stream_mode="values"):
             last = state
@@ -178,6 +222,7 @@ async def _run_agent(agent, messages: list, config: RunnableConfig, timeout: flo
         logger.exception("research agent failed")
         run.emit("notice", {"message": f"Research step failed ({type(err).__name__}); answering from sources found so far."})
 
+    # The agent's conclusion is its last text-only message (messages with tool calls are intermediate steps).
     notes = ""
     msgs = last.get("messages") or []
     for m in reversed(msgs):
@@ -196,18 +241,23 @@ async def _run_agent(agent, messages: list, config: RunnableConfig, timeout: flo
 
 
 def _sources_block(run: RunContext) -> str:
+    """Format the evidence for the writer: one ``[S#] title | domain | date`` block per source.
+
+    At most ``max_sources_in_context`` sources, preferring pages that were actually read over bare search
+    snippets, within a total budget of ~14K tokens. Blocks are listed in id order so ``[S#]`` ids read naturally.
+    """
     s = get_settings()
     srcs = run.registry.all()
     # fetched pages first (they have real content), then search hits with snippets
     ranked = sorted(srcs, key=lambda x: (not x.fetched, x.id))[: s.max_sources_in_context]
     blocks = []
-    budget = 14000 * 4
+    budget = 14000 * 4          # characters (~4 chars per token)
     for src in sorted(ranked, key=lambda x: x.id):
         body = src.content or src.snippet
         date = f" | published {src.published[:10]}" if src.published else ""
         block = f"[S{src.id}] {src.title} | {src.domain}{date}\n{body}"
         if budget - len(block) < 0:
-            block = block[: max(400, budget)]
+            block = block[: max(400, budget)]   # cut the last block to fit, but keep at least its header + a snippet
         budget -= len(block)
         blocks.append(block)
         if budget <= 0:
@@ -216,10 +266,17 @@ def _sources_block(run: RunContext) -> str:
 
 
 async def synthesize(state: State, config: RunnableConfig) -> dict:
+    """Write the final answer, streaming tokens to the UI through the citation guard.
+
+    The writer (long-context tier) sees the sources block and the research notes and cites sources as ``[S#]``.
+    :class:`CitationStreamer` rewrites those to ``[1]``, ``[2]``... as tokens stream, drops ids that don't exist
+    and strips raw URLs, so every citation chip in the UI links to a page a tool really returned.
+    Chitchat skips sources entirely and just converses.
+    """
     run = current_run()
     route = state.get("route", {})
     today = _today(run)
-    history = state.get("messages", [])[:-1][-6:]
+    history = state.get("messages", [])[:-1][-6:]   # up to 3 earlier exchanges
     if route.get("intent") == "chitchat":
         system = prompts.CHITCHAT.format(today=today)
         msgs = [("system", system), *[(("human" if isinstance(m, HumanMessage) else "ai"), _text(m)) for m in history], ("human", state["question"])]
@@ -243,13 +300,13 @@ async def synthesize(state: State, config: RunnableConfig) -> dict:
             if out:
                 parts.append(out)
                 run.emit("token", {"text": out})
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:  # noqa: BLE001 - every tier failed: tell the user instead of erroring the stream
         logger.exception("synthesis failed")
         msg = "\n\n_I couldn't finish writing the answer: every model tier is rate-limited right now. Please try again in a minute._"
         parts.append(msg)
         run.emit("token", {"text": msg})
         run.emit("notice", {"message": f"Writer failed: {str(err)[:160]}"})
-    tail = streamer.flush()
+    tail = streamer.flush()      # text held back because it might have been the start of a citation marker
     if tail:
         parts.append(tail)
         run.emit("token", {"text": tail})
@@ -263,13 +320,19 @@ async def synthesize(state: State, config: RunnableConfig) -> dict:
 
 
 class FollowUps(BaseModel):
+    """Structured output of the follow-up step."""
+
     follow_ups: list[str] = Field(description="3 short follow-up questions")
     title: str | None = Field(default=None, description="3-6 word chat title, only if asked")
 
 
 async def follow_ups(state: State, config: RunnableConfig) -> dict:
+    """Suggest 3 follow-up questions (UI chips) and, on a thread's first turn, a short chat title.
+
+    Best-effort: uses the cheap ``fast`` tier with a 20 s cap and silently skips on any failure.
+    """
     run = current_run()
-    first = len([m for m in state.get("messages", []) if isinstance(m, HumanMessage)]) <= 1
+    first = len([m for m in state.get("messages", []) if isinstance(m, HumanMessage)]) <= 1   # first turn of the thread
     try:
         llm = chat_model("fast", temperature=0.4).with_structured_output(FollowUps)
         res = await asyncio.wait_for(llm.ainvoke([("human", prompts.FOLLOWUPS.format(
@@ -288,6 +351,12 @@ async def follow_ups(state: State, config: RunnableConfig) -> dict:
 
 
 def build_graph(checkpointer=None):
+    """Assemble and compile the graph drawn in the module docstring.
+
+    Args:
+        checkpointer: a LangGraph saver that persists each thread's state (conversation memory). ``None`` means
+            no memory between turns.
+    """
     g = StateGraph(State)
     g.add_node("route", route_node)
     g.add_node("quick_research", quick_research)

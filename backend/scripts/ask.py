@@ -13,6 +13,7 @@ from app.observability import flush_traces, setup_observability
 
 
 async def main(q: str, mode: str, tz: str, raw: bool) -> None:
+    """Run one turn and pretty-print its events (``raw`` prints every event as JSON instead)."""
     async for ev in run_turn(q, None, mode, tz):
         name, data = ev["event"], ev["data"]
         if raw:

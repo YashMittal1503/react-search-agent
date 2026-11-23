@@ -1,4 +1,11 @@
-"""HTML -> clean markdown, a content-quality check, and query-focused chunk selection."""
+"""HTML -> clean markdown, a content-quality check, and query-focused chunk selection.
+
+* :func:`html_to_markdown` strips navigation/boilerplate with trafilatura and returns the main text.
+* :func:`quality` decides whether that text is a real article or a bot wall / JS shell / empty page, which tells
+  the fetch waterfall whether to try the next tier.
+* :func:`select_relevant` keeps only the passages that matter for the question (BM25), so a long page costs a
+  few hundred tokens instead of thousands.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,7 @@ import re
 import trafilatura
 from rank_bm25 import BM25Okapi
 
+# Phrases typical of bot walls, consent/paywalls, JS-required shells and error pages.
 _BLOCK_PATTERNS = [
     r"enable javascript", r"javascript is (disabled|required)", r"checking (if the site connection is secure|your browser)",
     r"verify(ing)? you are (a )?human", r"are you a robot", r"captcha", r"access denied", r"request blocked",
@@ -17,9 +25,14 @@ _BLOCK_RE = re.compile("|".join(_BLOCK_PATTERNS), re.IGNORECASE)
 
 
 def html_to_markdown(html: str, url: str | None = None) -> tuple[str, str, str | None]:
-    """Returns (markdown, title, published_date)."""
+    """Extract the main content of a page.
+
+    Returns:
+        ``(markdown, title, published_date)``; the title falls back to ``<title>`` and the date may be ``None``.
+    """
     text = trafilatura.extract(
         html, url=url, output_format="markdown", include_links=False, include_tables=True,
+        # favor_recall: better to keep a bit of boilerplate than to lose content; BM25 selection trims it later.
         include_comments=False, favor_recall=True, deduplicate=True,
     ) or ""
     title, date = "", None
@@ -37,7 +50,10 @@ def html_to_markdown(html: str, url: str | None = None) -> tuple[str, str, str |
 
 
 def quality(text: str) -> str:
-    """ok | thin | blocked"""
+    """Classify extracted text as ``ok``, ``thin`` (too little to be useful) or ``blocked`` (bot wall, 403...).
+
+    A block phrase only counts on short pages: a long article that merely *mentions* "captcha" is still fine.
+    """
     t = (text or "").strip()
     if len(t) < 200:
         return "blocked" if _BLOCK_RE.search(t) else "thin"
@@ -49,10 +65,12 @@ def quality(text: str) -> str:
 
 
 _WORD = re.compile(r"[a-z0-9]+")
+# Very common words carry no signal for BM25; dropping them sharpens the ranking.
 _STOP = set("the a an and or of to in on for is are was were be by with at from as that this it its what which who how when where why do does did i you we they".split())
 
 
 def _tokens(s: str) -> list[str]:
+    """Lower-cased word tokens without stopwords and single characters."""
     return [w for w in _WORD.findall(s.lower()) if w not in _STOP and len(w) > 1]
 
 
@@ -61,7 +79,7 @@ def chunk(text: str, target_chars: int = 900) -> list[str]:
     paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
     chunks, buf, heading = [], "", ""
     for p in paras:
-        if p.startswith("#") and len(p) < 160:
+        if p.startswith("#") and len(p) < 160:      # a heading: start a new chunk and prefix it to what follows
             if buf:
                 chunks.append(buf)
                 buf = ""
@@ -83,17 +101,26 @@ def chunk(text: str, target_chars: int = 900) -> list[str]:
 
 def select_relevant(text: str, query: str, budget_tokens: int = 1200) -> str:
     """Pick the chunks most relevant to ``query`` (BM25) within a token budget; keep document order.
-    The lead chunk is always kept because it usually holds the summary and the date."""
+
+    The lead chunk is always kept because it usually holds the summary and the date. Gaps between non-adjacent
+    chunks are marked with ``[…]`` so the model knows text was skipped.
+
+    Args:
+        text: the page as markdown.
+        query: what the agent is looking for (the question or the agent's fetch focus).
+        budget_tokens: rough size of the result (~4 characters per token).
+    """
     budget_chars = budget_tokens * 4
     pieces = chunk(text, target_chars=max(250, min(900, budget_chars // 4)))   # several chunks must fit the budget
     if not pieces:
         return ""
-    if sum(len(p) for p in pieces) <= budget_chars:
+    if sum(len(p) for p in pieces) <= budget_chars:   # the whole page fits: no need to rank
         return "\n\n".join(pieces)
     q = _tokens(query)
-    corpus = [_tokens(p) or ["_"] for p in pieces]
+    corpus = [_tokens(p) or ["_"] for p in pieces]       # BM25 can't handle empty documents
     scores = BM25Okapi(corpus).get_scores(q) if q else [0.0] * len(pieces)
-    order = sorted(range(1, len(pieces)), key=lambda i: scores[i], reverse=True)
+    order = sorted(range(1, len(pieces)), key=lambda i: scores[i], reverse=True)   # best first, lead excluded
+    # Greedy fill: take the best chunks that still fit, skipping (not stopping at) ones that are too big.
     chosen, used = {0}, len(pieces[0])
     for i in order:
         if used + len(pieces[i]) > budget_chars:

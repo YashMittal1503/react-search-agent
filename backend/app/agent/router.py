@@ -1,5 +1,9 @@
 """Query router: intent, mode (quick/deep), scene and a standalone search query.
-LLM structured output on the fast tier with a keyword heuristic as an instant fallback."""
+
+The router asks the cheap ``fast`` tier for a structured :class:`Route`. A keyword heuristic
+(:func:`heuristic_route`) is always computed first: it answers greetings instantly (no LLM call at all) and is
+the fallback when every model is rate-limited. The intent also picks the UI's background scene.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +22,8 @@ Intent = Literal["weather", "news", "travel", "finance", "sports", "tech", "scie
 
 
 class Route(BaseModel):
+    """The router's decision for one message (also the structured-output schema the LLM fills in)."""
+
     intent: Intent = Field(description="Topic of the message")
     mode: Literal["quick", "deep"] = Field(description="quick = 1-3 lookups, deep = multi-step research")
     location: str | None = Field(default=None, description="Place the question is about, if any")
@@ -26,12 +32,14 @@ class Route(BaseModel):
     travel_setting: Literal["beach", "mountain", "city", "desert", "snow", "countryside"] | None = None
 
 
+# Intent -> background scene family in the frontend (``frontend/src/components/scenes``).
 SCENES = {
     "weather": "weather", "news": "news", "travel": "travel", "finance": "finance", "sports": "sports",
     "tech": "tech", "science": "space", "health": "health", "food": "food", "shopping": "default",
     "general": "default", "chitchat": "default",
 }
 
+# Heuristic intent detection: the first pattern that matches wins, so order matters (weather before travel...).
 _KEYWORDS: list[tuple[str, str]] = [
     ("weather", r"\b(weather|forecast|temperature|rain|raining|rainy|snow|snowing|humidity|umbrella|sunny|windy|degrees)\b"),
     ("travel", r"\b(itinerary|trip|travel|vacation|holiday|visit|things to do|places to see|hotel|flight|tour|backpack)\b"),
@@ -43,14 +51,18 @@ _KEYWORDS: list[tuple[str, str]] = [
     ("health", r"\b(health|symptom|disease|diet|exercise|vaccine|medicine|sleep|calories|protein)\b"),
     ("food", r"\b(recipe|restaurant|cook|food|dish|cuisine|cafe|eat|dinner|breakfast|lunch)\b"),
 ]
+# Phrases that signal multi-step research.
 _DEEP = re.compile(r"\b(itinerary|plan|compare|comparison|vs\.?|versus|pros and cons|research|in[- ]depth|detailed|report|analy[sz]e|"
                    r"step[- ]by[- ]step|best .* for|day trip|\d+[- ]day)\b", re.I)
+# Whole-message greetings / meta questions that need no web lookup.
 _CHITCHAT = re.compile(r"^\s*(hi|hello|hey|thanks|thank you|ok|okay|cool|who are you|what can you do|good (morning|evening))\b[\s!.?]*$", re.I)
+# Freshness hints: "today/now/latest" -> 1 day, "this week/recent" -> 7 days.
 _RECENT = re.compile(r"\b(today|now|current(ly)?|latest|live|tonight|right now|breaking)\b", re.I)
 _WEEK = re.compile(r"\b(this week|recent(ly)?|past few days|trending)\b", re.I)
 
 
 def heuristic_route(question: str) -> Route:
+    """Route by keywords only (instant, free). Long questions (> 28 words) count as deep unless they are chitchat."""
     q = question.lower()
     intent = "general"
     if _CHITCHAT.match(q):
@@ -62,13 +74,22 @@ def heuristic_route(question: str) -> Route:
                 break
     mode = "deep" if (_DEEP.search(q) or len(q.split()) > 28) and intent != "chitchat" else "quick"
     recency = 1 if _RECENT.search(q) else 7 if _WEEK.search(q) else (3 if intent == "news" else None)
+    # Location guess: capitalised words after "in/at/for/to" ("weather in New Delhi today" -> "New Delhi").
     m = re.search(r"\b(?:in|at|for|to)\s+([A-Z][\w\-]+(?:[ ,]+[A-Z][\w\-]+){0,2})", question)
     return Route(intent=intent, mode=mode, location=m.group(1).strip(" ,") if m else None, recency_days=recency, search_query=question)
 
 
 async def route_question(question: str, history: str, today: str, tz: str, config=None) -> Route:
+    """Route one message with the LLM, falling back to the heuristic.
+
+    Args:
+        question: this turn's message.
+        history: short transcript of earlier turns, so "and tomorrow?" can be resolved into a standalone query.
+        today, tz: current date/time and timezone, so the model can judge freshness.
+        config: the LangGraph runnable config (keeps the call inside the turn's LangSmith trace).
+    """
     fallback = heuristic_route(question)
-    if fallback.intent == "chitchat":
+    if fallback.intent == "chitchat":       # obvious greeting: skip the LLM call
         return fallback
     try:
         llm = chat_model("fast", temperature=0).with_structured_output(Route)
@@ -87,6 +108,7 @@ async def route_question(question: str, history: str, today: str, tz: str, confi
 
 
 def scene_for(route: Route) -> dict:
+    """The ``scene`` SSE payload: scene family plus parameters (travel setting, location for weather lookups)."""
     params: dict = {}
     if route.intent == "travel" and route.travel_setting:
         params["setting"] = route.travel_setting

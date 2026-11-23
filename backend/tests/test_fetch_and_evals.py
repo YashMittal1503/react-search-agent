@@ -12,6 +12,7 @@ from evals.schema import Assertion, load
 
 @pytest.fixture(scope="module")
 def site():
+    """Start the fixture site once for the module and return its base URL."""
     return serve_in_background()
 
 

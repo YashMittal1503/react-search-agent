@@ -15,6 +15,8 @@ from app.tools.fetch.waterfall import fetch
 
 from .runner import REPORTS
 
+# Real public URLs grouped by the kind of page they represent. Some are expected to fail (paywalls, logins):
+# the benchmark measures honestly how often the waterfall gets usable text without any evasion.
 URLS: dict[str, list[str]] = {
     "static_article": [
         "https://en.wikipedia.org/wiki/ReAct_(machine_learning)",
@@ -71,10 +73,12 @@ URLS: dict[str, list[str]] = {
 
 
 async def bench() -> None:
+    """Fetch every URL (cache off, 4 at a time), print one line per URL, and write JSON + markdown reports."""
     rows = []
     sem = asyncio.Semaphore(4)
 
     async def one(cat: str, url: str):
+        """Fetch one URL and record whether it produced quality text, from which tier and how fast."""
         async with sem:
             r = await fetch(url, use_cache=False)
         good = r.ok and r.status == "ok"
@@ -86,7 +90,7 @@ async def bench() -> None:
     by_cat = defaultdict(list)
     for r in rows:
         by_cat[r["category"]].append(r)
-    tiers = Counter(r["tier"].split(":")[0] for r in rows if r["ok"])
+    tiers = Counter(r["tier"].split(":")[0] for r in rows if r["ok"])   # "site_api:wikipedia" -> "site_api"
     summary = {
         "urls": len(rows),
         "success_rate": round(sum(r["ok"] for r in rows) / len(rows), 3),
@@ -105,4 +109,5 @@ async def bench() -> None:
 
 
 def main() -> None:
+    """Entry point for ``python -m evals scrape-bench``."""
     asyncio.run(bench())

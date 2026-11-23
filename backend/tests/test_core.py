@@ -7,6 +7,7 @@ from app.tools.fetch.extract import chunk, quality, select_relevant
 
 
 def registry(n=3):
+    """A SourceRegistry pre-filled with ``n`` fake sources (ids S1..Sn)."""
     r = SourceRegistry()
     for i in range(n):
         r.add(f"https://example{i}.com/page", f"Title {i}", "snippet")

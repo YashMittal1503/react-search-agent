@@ -1,4 +1,16 @@
-"""All prompts in one place."""
+"""All prompts in one place, as ``str.format`` templates.
+
+Placeholders like ``{today}``, ``{tz}``, ``{locale}`` are filled per turn by ``graph.py``; literal braces in a
+prompt must therefore be doubled (``{{`` / ``}}``).
+
+ROUTER      classify the message (intent, quick/deep, location, freshness, standalone query)
+QUICK       system prompt of the quick ReAct agent
+DEEP        system prompt of the deep-research planner (deepagents)
+RESEARCHER  system prompt of the ``web-researcher`` subagent
+SYNTHESIZE  the writer: answer only from the numbered sources, cite them as [S#]
+CHITCHAT    small talk, no sources
+FOLLOWUPS   follow-up chips and the chat title
+"""
 
 ROUTER = """You classify a user's message for a web research assistant. Today is {today}. User timezone: {tz}.
 

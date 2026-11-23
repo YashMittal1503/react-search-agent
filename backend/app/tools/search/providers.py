@@ -18,10 +18,12 @@ from ...settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+# URL fragments of ad/redirect links some engines mix into results.
 _AD_MARKERS = ("bing.com/aclick", "duckduckgo.com/y.js", "/aclk?", "doubleclick.net", "googleadservices")
 
 
 def _hit(url: str, title: str, snippet: str, provider: str, published: str | None = None) -> dict[str, Any] | None:
+    """Normalise one result into the common hit shape, or ``None`` for non-HTTP or ad URLs."""
     if not url or not url.startswith("http") or any(m in url for m in _AD_MARKERS):
         return None
     return {"url": url, "title": (title or "").strip(), "snippet": (snippet or "").strip()[:500],
@@ -29,16 +31,18 @@ def _hit(url: str, title: str, snippet: str, provider: str, published: str | Non
 
 
 class SearchError(RuntimeError):
-    pass
+    """Raised when a provider isn't configured (no key / URL). The router skips it without benching it."""
 
 
 # ── Tavily ──────────────────────────────────────────────────────────────────
 async def tavily(query: str, n: int, recency_days: int | None, news: bool) -> list[dict]:
+    """Tavily search API: LLM-oriented results with clean snippets; best quality when a key is set."""
     key = get_settings().tavily_api_key
     if not key:
         raise SearchError("tavily: no key")
     body: dict[str, Any] = {"query": query, "max_results": n, "search_depth": "basic", "topic": "news" if news else "general"}
     if recency_days:
+        # News topic takes a day count; general search only accepts day/week/month/year buckets.
         body["days" if news else "time_range"] = recency_days if news else ("day" if recency_days <= 1 else "week" if recency_days <= 7 else "month" if recency_days <= 31 else "year")
     async with httpx.AsyncClient(timeout=20) as c:
         r = await c.post("https://api.tavily.com/search", json=body, headers={"Authorization": f"Bearer {key}"})
@@ -49,6 +53,7 @@ async def tavily(query: str, n: int, recency_days: int | None, news: bool) -> li
 
 # ── Exa ─────────────────────────────────────────────────────────────────────
 async def exa(query: str, n: int, recency_days: int | None, news: bool) -> list[dict]:
+    """Exa neural search; asks for 3-sentence highlights to use as snippets."""
     key = get_settings().exa_api_key
     if not key:
         raise SearchError("exa: no key")
@@ -74,6 +79,7 @@ async def exa(query: str, n: int, recency_days: int | None, news: bool) -> list[
 
 # ── SearXNG (self-hosted metasearch) ────────────────────────────────────────
 async def searxng(query: str, n: int, recency_days: int | None, news: bool) -> list[dict]:
+    """A self-hosted SearXNG instance (``docker compose up searxng``), queried through its JSON API."""
     base = get_settings().searxng_url
     if not base:
         raise SearchError("searxng: not configured")
@@ -89,15 +95,17 @@ async def searxng(query: str, n: int, recency_days: int | None, news: bool) -> l
 
 # ── ddgs metasearch (no key): rotate engines, because each one throttles bursts differently ──
 def _ddg_timelimit(days: int | None) -> str | None:
+    """Map a day count to ddgs' timelimit codes: d(ay) / w(eek) / m(onth) / y(ear)."""
     if not days:
         return None
     return "d" if days <= 1 else "w" if days <= 7 else "m" if days <= 31 else "y"
 
 
-_DDG_SLOTS = asyncio.Semaphore(2)
+_DDG_SLOTS = asyncio.Semaphore(2)          # at most 2 concurrent ddgs searches: bursts get throttled
+# Engines tried in order. Each engine has its own throttling, so rotating keeps free search working under load.
 _TEXT_BACKENDS = ["duckduckgo", "startpage", "brave", "yahoo", "mojeek", "auto", "wikipedia"]
 _NEWS_BACKENDS = ["duckduckgo", "yahoo", "auto"]
-_backend_cooldown: dict[str, float] = {}
+_backend_cooldown: dict[str, float] = {}   # engine -> skip until (unix time), after it errored
 
 
 async def duckduckgo(query: str, n: int, recency_days: int | None, news: bool) -> list[dict]:
@@ -107,6 +115,7 @@ async def duckduckgo(query: str, n: int, recency_days: int | None, news: bool) -
     from ddgs import DDGS
 
     def run(backend: str, q: str) -> list[dict]:
+        """Blocking ddgs call for one engine (run in a worker thread). "No results" is an empty list, not an error."""
         d = DDGS(timeout=10)
         try:
             if news:
@@ -140,6 +149,7 @@ async def duckduckgo(query: str, n: int, recency_days: int | None, news: bool) -
 
 # ── Google News RSS (news fallback, no key) ─────────────────────────────────
 async def google_news_rss(query: str, n: int, recency_days: int | None, news: bool = True) -> list[dict]:
+    """Google News RSS search (no key). ``when:Nd`` restricts to recent articles; the publisher goes in the snippet."""
     q = query + (f" when:{recency_days}d" if recency_days else "")
     async with httpx.AsyncClient(timeout=12, follow_redirects=True) as c:
         r = await c.get("https://news.google.com/rss/search", params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"})
@@ -155,5 +165,6 @@ async def google_news_rss(query: str, n: int, recency_days: int | None, news: bo
     return out
 
 
+# Fallback chains used by the search router (first one with results wins).
 WEB_PROVIDERS = [("tavily", tavily), ("exa", exa), ("searxng", searxng), ("duckduckgo", duckduckgo)]
 NEWS_PROVIDERS = [("tavily", tavily), ("exa", exa), ("duckduckgo", duckduckgo), ("google_news", google_news_rss), ("searxng", searxng)]

@@ -14,38 +14,52 @@ from ..settings import get_settings
 
 
 def _now() -> datetime:
+    """Timezone-aware UTC now (stored with every row)."""
     return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
-    pass
+    """SQLAlchemy declarative base for the two tables below."""
 
 
 class Thread(Base):
+    """A chat thread in the sidebar. ``owner`` is the anonymous browser id (X-Client-Id); there are no accounts.
+
+    The thread id doubles as the LangGraph ``thread_id``, so the agent's memory and the UI history line up.
+    """
+
     __tablename__ = "threads"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     owner: Mapped[str] = mapped_column(String(64), index=True)
     title: Mapped[str] = mapped_column(String(120), default="New chat")
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
-    scene: Mapped[str] = mapped_column(String(32), default="default")
+    scene: Mapped[str] = mapped_column(String(32), default="default")    # last scene, restored when reopened
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
     def to_dict(self) -> dict:
+        """JSON shape returned by the threads API."""
         return {"id": self.id, "title": self.title, "pinned": self.pinned, "scene": self.scene,
                 "created_at": self.created_at.isoformat(), "updated_at": self.updated_at.isoformat()}
 
 
 class Message(Base):
+    """One user or assistant message, as displayed in the UI.
+
+    ``meta`` holds everything needed to re-render an assistant answer after a reload: cited and all sources,
+    timeline steps, plan, widgets, route and follow-ups.
+    """
+
     __tablename__ = "messages"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     thread_id: Mapped[str] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"), index=True)
-    role: Mapped[str] = mapped_column(String(16))
+    role: Mapped[str] = mapped_column(String(16))          # "user" | "assistant"
     content: Mapped[str] = mapped_column(Text, default="")
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     def to_dict(self) -> dict:
+        """JSON shape returned by the messages API."""
         return {"id": self.id, "role": self.role, "content": self.content, "meta": self.meta or {},
                 "created_at": self.created_at.isoformat()}
 
@@ -55,9 +69,10 @@ _session: async_sessionmaker[AsyncSession] | None = None
 
 
 async def init_db() -> None:
+    """Create the engine and session factory and make sure the tables exist (called at app startup)."""
     global _engine, _session
     url = get_settings().database_url
-    if url.startswith("sqlite"):
+    if url.startswith("sqlite"):          # SQLite won't create the folder of its database file
         Path(url.split("///", 1)[-1]).parent.mkdir(parents=True, exist_ok=True)
     _engine = create_async_engine(url, pool_pre_ping=True)
     _session = async_sessionmaker(_engine, expire_on_commit=False)
@@ -66,23 +81,27 @@ async def init_db() -> None:
 
 
 def session() -> AsyncSession:
+    """A new async session; use as ``async with session() as s:``."""
     assert _session is not None, "init_db() not called"
     return _session()
 
 
 async def list_threads(owner: str) -> list[dict]:
+    """The owner's 200 most recently active threads, newest first."""
     async with session() as s:
         rows = (await s.execute(select(Thread).where(Thread.owner == owner).order_by(Thread.updated_at.desc()).limit(200))).scalars()
         return [t.to_dict() for t in rows]
 
 
 async def get_thread(owner: str, thread_id: str) -> Thread | None:
+    """A thread, only if it belongs to ``owner`` (so one browser can't read another's chats)."""
     async with session() as s:
         t = await s.get(Thread, thread_id)
         return t if t and t.owner == owner else None
 
 
 async def create_thread(owner: str, title: str = "New chat") -> dict:
+    """Create an empty thread and return it."""
     async with session() as s:
         t = Thread(owner=owner, title=title)
         s.add(t)
@@ -91,6 +110,11 @@ async def create_thread(owner: str, title: str = "New chat") -> dict:
 
 
 async def update_thread(owner: str, thread_id: str, **fields) -> dict | None:
+    """Set ``title`` / ``pinned`` / ``scene`` (``None`` values are ignored) and bump ``updated_at``.
+
+    Returns:
+        The updated thread, or ``None`` if it doesn't exist or isn't the owner's.
+    """
     async with session() as s:
         t = await s.get(Thread, thread_id)
         if not t or t.owner != owner:
@@ -104,6 +128,7 @@ async def update_thread(owner: str, thread_id: str, **fields) -> dict | None:
 
 
 async def delete_thread(owner: str, thread_id: str) -> bool:
+    """Delete a thread and its messages (explicitly, since SQLite doesn't enforce cascades by default)."""
     async with session() as s:
         t = await s.get(Thread, thread_id)
         if not t or t.owner != owner:
@@ -116,6 +141,7 @@ async def delete_thread(owner: str, thread_id: str) -> bool:
 
 
 async def add_message(thread_id: str, role: str, content: str, meta: dict | None = None) -> dict:
+    """Append a message and mark the thread as recently active (it moves to the top of the sidebar)."""
     async with session() as s:
         m = Message(thread_id=thread_id, role=role, content=content, meta=meta or {})
         s.add(m)
@@ -127,6 +153,7 @@ async def add_message(thread_id: str, role: str, content: str, meta: dict | None
 
 
 async def list_messages(thread_id: str) -> list[dict]:
+    """All messages of a thread in chronological order (ownership is checked by the caller)."""
     async with session() as s:
         rows = (await s.execute(select(Message).where(Message.thread_id == thread_id).order_by(Message.created_at))).scalars()
         return [m.to_dict() for m in rows]
