@@ -177,9 +177,33 @@ async def _site_api(url: str, client: httpx.AsyncClient) -> FetchResult:
     return FetchResult(url, False, tier="site_api", status="unsupported")
 
 
+# ── SSRF guard ──────────────────────────────────────────────────────────────
+def is_private_url(url: str) -> bool:
+    """True for localhost / private / link-local targets (incl. hostnames that resolve to them)."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").strip("[]").lower()
+    if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        return True
+    try:
+        addrs = {ipaddress.ip_address(host)}
+    except ValueError:
+        try:
+            addrs = {ipaddress.ip_address(i[4][0]) for i in socket.getaddrinfo(host, None)}
+        except OSError:
+            return False
+    return any(a.is_private or a.is_loopback or a.is_link_local or a.is_reserved or a.is_multicast for a in addrs)
+
+
 # ── orchestrator ────────────────────────────────────────────────────────────
 async def fetch(url: str, use_cache: bool = True) -> FetchResult:
     t0 = time.perf_counter()
+    if not url.lower().startswith(("http://", "https://")):
+        return FetchResult(url, False, status="unsupported", error="only http(s) URLs can be fetched")
+    if not get_settings().allow_private_fetch and await asyncio.to_thread(is_private_url, url):
+        return FetchResult(url, False, status="blocked", error="refused: private or local network address")
     key = cache.make_key("fetch", url)
     if use_cache and (hit := cache.get(key)):
         res = FetchResult(**hit)

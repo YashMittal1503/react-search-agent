@@ -84,10 +84,10 @@ def chunk(text: str, target_chars: int = 900) -> list[str]:
 def select_relevant(text: str, query: str, budget_tokens: int = 1200) -> str:
     """Pick the chunks most relevant to ``query`` (BM25) within a token budget; keep document order.
     The lead chunk is always kept because it usually holds the summary and the date."""
-    pieces = chunk(text)
+    budget_chars = budget_tokens * 4
+    pieces = chunk(text, target_chars=max(250, min(900, budget_chars // 4)))   # several chunks must fit the budget
     if not pieces:
         return ""
-    budget_chars = budget_tokens * 4
     if sum(len(p) for p in pieces) <= budget_chars:
         return "\n\n".join(pieces)
     q = _tokens(query)

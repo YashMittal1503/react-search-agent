@@ -49,11 +49,14 @@ def get_graph():
 
 
 async def run_turn(question: str, thread_id: str | None = None, mode: str = "auto", timezone: str = "UTC",
-                   locale: str = "en-US") -> AsyncIterator[dict[str, Any]]:
-    """Yields ``{"event", "data"}`` dicts; the last one is ``done`` with the full result."""
+                   locale: str = "en-US", capture: list | None = None) -> AsyncIterator[dict[str, Any]]:
+    """Yields ``{"event", "data"}`` dicts; the last one is ``done`` with the full result.
+    ``capture`` (evals) receives the RunContext, whose registry holds the excerpts the writer saw."""
     run_id = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
     ctx = RunContext(question=question, timezone=timezone or "UTC", locale=locale or "en-US", mode=mode, queue=queue)
+    if capture is not None:
+        capture.append(ctx)
     config = {
         "configurable": {"thread_id": thread_id or run_id},
         "run_name": "search-agent-turn",

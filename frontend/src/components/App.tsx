@@ -4,6 +4,7 @@ import { Moon, PanelLeftOpen, Sparkles, Sun } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Toaster } from "sonner";
 import { SCENE_LABEL } from "@/lib/scene";
+import type { SceneName, SceneParams } from "@/lib/types";
 import { useChat } from "@/store/chat";
 import { AssistantMessage, UserMessage } from "./chat/Message";
 import { Composer } from "./chat/Composer";
@@ -30,7 +31,7 @@ function useTheme() {
 }
 
 export function App() {
-  const { messages, loadThreads, openThread, scene, previewScene, ambient, setAmbient, sidebarOpen, setSidebar, loadingThread, streaming } = useChat();
+  const { messages, loadThreads, openThread, scene, previewScene, setPreviewScene, ambient, setAmbient, sidebarOpen, setSidebar, loadingThread, streaming } = useChat();
   const { dark, toggle } = useTheme();
   const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -42,7 +43,17 @@ export function App() {
     if (t) openThread(t);
     try { if (localStorage.getItem("rsa-ambient") === "0") setAmbient(false); } catch {}
     if (window.innerWidth < 768) setSidebar(false);
-  }, [loadThreads, openThread, setAmbient, setSidebar]);
+    // Scene gallery / e2e hook: /?scene=weather&condition=rain&day=0, /?scene=travel&setting=beach
+    const p = new URLSearchParams(window.location.search);
+    const sc = p.get("scene");
+    if (sc) {
+      setPreviewScene({ scene: sc as SceneName, params: {
+        condition: (p.get("condition") || undefined) as SceneParams["condition"],
+        setting: (p.get("setting") || undefined) as SceneParams["setting"],
+        is_day: p.get("day") !== "0",
+      } });
+    }
+  }, [loadThreads, openThread, setAmbient, setSidebar, setPreviewScene]);
 
   useEffect(() => {
     if (stick.current) bottom.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth", block: "end" });
@@ -89,7 +100,7 @@ export function App() {
 
         <div className="mx-auto w-full max-w-3xl px-4 pb-4">
           <Composer autoFocus />
-          <p className="mt-2 text-center text-[11px] text-subtle drop-shadow-sm">Answers come from live web sources and free AI models. Check important facts.</p>
+          <p className="mx-auto mt-2 w-fit rounded-full bg-surface px-3 py-0.5 text-center text-[11px] text-muted backdrop-blur">Answers come from live web sources and free AI models. Check important facts.</p>
         </div>
       </main>
       <CommandPalette toggleTheme={toggle} dark={dark} />

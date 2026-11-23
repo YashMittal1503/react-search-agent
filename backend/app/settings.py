@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # fetch
     enable_browser_fetch: bool = False
+    allow_private_fetch: bool = False   # SSRF guard: never fetch localhost/private IPs unless explicitly allowed (evals)
     fetch_timeout: float = 15.0
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "

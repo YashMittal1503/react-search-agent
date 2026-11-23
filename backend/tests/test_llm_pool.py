@@ -5,7 +5,15 @@ import time
 
 import pytest
 
-from app.llm.llm_pool import ErrorKind, LLMRouter, PoolConfig, classify_error, load_keys, parse_duration, retry_after_seconds
+from app.llm.llm_pool import (
+    ErrorKind,
+    LLMRouter,
+    PoolConfig,
+    classify_error,
+    load_keys,
+    parse_duration,
+    retry_after_seconds,
+)
 from app.llm.llm_pool.router import AllProvidersFailed
 
 
