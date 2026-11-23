@@ -170,7 +170,11 @@ export const useChat = create<ChatState>((set, get) => ({
             ...m,
             content: data.answer || m.content,
             streaming: false,
-            meta: { ...m.meta, sources: data.sources, all_sources: data.all_sources, widgets: data.widgets, route: data.route, usage: data.usage },
+            meta: {
+              ...m.meta, sources: data.sources, all_sources: data.all_sources, widgets: data.widgets, route: data.route, usage: data.usage,
+              // steps still "running" were cut off by the research time budget
+              steps: (m.meta.steps || []).map((st) => (st.status === "running" ? { ...st, status: "failed", detail: "stopped (time budget)" } : st)),
+            },
           }));
           break;
       }

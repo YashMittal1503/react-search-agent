@@ -43,7 +43,7 @@ async def web_search(
     sid = run.step("search", query, recency_days=recency_days)
     hits, provider = await search(query, n=max(3, min(max_results, 10)), recency_days=recency_days)
     run.step_update(sid, "done" if hits else "failed", provider=provider, count=len(hits),
-                    domains=[domain_of(h["url"]) for h in hits[:5]])
+                    domains=list(dict.fromkeys(domain_of(h["url"]) for h in hits))[:5])
     if not hits:
         return "No results. Try different wording, a broader query, or drop the date filter."
     return f"Results for {query!r} via {provider}:\n" + _format_hits(hits, "web")
@@ -61,7 +61,7 @@ async def news_search(
     sid = run.step("news", topic, recency_days=recency_days)
     hits, provider = await search(topic, n=max(3, min(max_results, 10)), recency_days=recency_days, news=True)
     run.step_update(sid, "done" if hits else "failed", provider=provider, count=len(hits),
-                    domains=[domain_of(h["url"]) for h in hits[:5]])
+                    domains=list(dict.fromkeys(domain_of(h["url"]) for h in hits))[:5])
     if not hits:
         return "No recent news found. Try a broader topic or a longer time window."
     if len(hits) >= 3:

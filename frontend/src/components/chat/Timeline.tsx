@@ -67,12 +67,12 @@ export function Timeline({ steps, plan, streaming }: { steps: Step[]; plan?: Tod
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 leading-snug">
                         <span>{stepText(s)}</span>
                         {s.kind === "fetch" && s.url && <Favicon domain={new URL(s.url).hostname} size={14} />}
-                        {s.status === "failed" && <span className="text-xs text-bad">{s.detail || "failed"} — trying other sources</span>}
+                        {s.status === "failed" && <span className="text-xs text-bad">{s.detail?.startsWith("stopped") ? s.detail : `${s.detail || "failed"} — trying other sources`}</span>}
                         {s.status === "done" && s.tier && s.kind === "fetch" && <span className="rounded bg-surface-hover px-1.5 text-[10px] uppercase tracking-wide text-subtle">{s.tier.replace(" (cached)", " · cached")}</span>}
                       </div>
                       {s.domains && s.domains.length > 0 && (
                         <div className="mt-1 flex flex-wrap gap-1.5">
-                          {s.domains.map((d) => (
+                          {[...new Set(s.domains)].map((d) => (
                             <span key={d} className="inline-flex items-center gap-1 rounded-full bg-surface-hover px-2 py-0.5 text-[11px]"><Favicon domain={d} size={12} />{d}</span>
                           ))}
                         </div>

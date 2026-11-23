@@ -9,7 +9,12 @@ astronomy, a sunset beach for Goa. The text stays perfectly readable on top.
 
 It runs entirely on **free** model and search tiers (Groq, Gemini, NVIDIA NIM, Mistral, OpenRouter, DuckDuckGo).
 
-![Scout: beach scene](docs/screenshots/scene-beach-dark.png)
+| Deep research: *quiet Goa beaches, 3 days* | Live weather: night over Mumbai |
+|---|---|
+| ![Deep research answer with citations on the beach scene](docs/screenshots/goa-deep-research.png) | ![Weather answer with live widget on a night-sky scene](docs/screenshots/mumbai-weather-night.png) |
+| ![Empty state with suggestion cards on the sunset beach scene](docs/screenshots/scene-beach-dark.png) | ![Rainstorm scene with readable glass surfaces](docs/screenshots/scene-storm-dark.png) |
+
+*These are real runs on free tiers. The scene follows the topic and the data: rain, snow, storm, fog, and day or night at the queried place.*
 
 ## What's interesting
 

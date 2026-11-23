@@ -89,7 +89,7 @@ export function AssistantMessage({ m, last }: { m: ChatMessage; last: boolean })
               {last && <button onClick={() => regenerate()} disabled={streaming} className="rounded-lg p-1.5 hover:bg-surface-hover hover:text-fg disabled:opacity-40" aria-label="Regenerate"><RefreshCw className="h-4 w-4" /></button>}
               {m.meta.usage && (
                 <span className="ml-auto text-[11px] text-subtle">
-                  {m.meta.usage.searches} searches · {m.meta.usage.fetches} pages · {m.meta.usage.seconds}s
+                  {m.meta.usage.searches} {m.meta.usage.searches === 1 ? "search" : "searches"} · {m.meta.usage.fetches} {m.meta.usage.fetches === 1 ? "page" : "pages"} read · {m.meta.usage.seconds}s
                 </span>
               )}
             </div>

@@ -147,7 +147,9 @@ async def chat(body: ChatIn, request: Request, x_client_id: str | None = Header(
                 followups = data["items"]
             elif name == "done":
                 route = data.get("route") or {}
-                meta = {**data, "steps": list(steps.values()), "plan": plan, "follow_ups": followups}
+                done_steps = [{**st, "status": "failed", "detail": "stopped (time budget)"} if st.get("status") == "running" else st
+                              for st in steps.values()]
+                meta = {**data, "steps": done_steps, "plan": plan, "follow_ups": followups}
                 meta.pop("answer", None)
                 await db.add_message(thread_id, "assistant", data.get("answer", ""), meta)
                 await db.update_thread(owner, thread_id, title=data.get("title"), scene=route.get("scene"))
