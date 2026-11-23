@@ -86,8 +86,8 @@ body {
 
 .glass {
   background: var(--surface);
+  /* only the standard property: with both present, the CSS minifier keeps just the -webkit- one */
   backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
 }
@@ -95,7 +95,6 @@ body {
 .glass-strong {
   background: var(--surface-strong);
   backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
 }

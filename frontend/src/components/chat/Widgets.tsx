@@ -31,7 +31,7 @@ function WeatherCard({ w }: { w: WeatherWidget }) {
         <div>
           <div className="text-sm text-muted">{place}</div>
           <div className="mt-1 flex items-center gap-3">
-            <CondIcon scene={today?.scene || "cloudy"} day={w.current.is_day} className="h-10 w-10" />
+            <CondIcon scene={w.scene?.condition || today?.scene || "cloudy"} day={w.current.is_day} className="h-10 w-10" />
             <span className="text-5xl font-semibold tracking-tight">{t(w.current.temperature_c)}</span>
             <div className="text-sm leading-tight">
               <div className="font-medium">{w.current.condition}</div>

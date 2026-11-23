@@ -56,7 +56,7 @@ export function AssistantMessage({ m, last }: { m: ChatMessage; last: boolean })
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3" data-testid="assistant-message">
       {m.meta.route?.mode && (
-        <div className="flex items-center gap-1.5 text-xs font-medium text-muted">
+        <div className="glass flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-muted">
           {m.meta.route.mode === "deep" ? <Sparkles className="h-3.5 w-3.5 text-accent" /> : <Zap className="h-3.5 w-3.5 text-accent" />}
           {m.meta.route.mode === "deep" ? "Deep research" : "Quick answer"}
           {m.meta.route.intent && m.meta.route.intent !== "general" && <span className="rounded-full bg-accent-soft px-2 py-0.5 capitalize text-accent">{m.meta.route.intent}</span>}

@@ -57,6 +57,7 @@ export interface WeatherWidget {
   };
   hourly: { time: string; temperature_c: number; precip_prob: number | null; condition: string }[];
   daily: { date: string; condition: string; scene: string; max_c: number; min_c: number; precip_prob: number; sunrise: string; sunset: string }[];
+  scene?: { condition: string; is_day: boolean };
 }
 
 export interface NewsWidget {

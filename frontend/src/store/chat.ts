@@ -64,7 +64,7 @@ export const useChat = create<ChatState>((set, get) => ({
   scene: { scene: "default", params: {} },
   previewScene: null,
   ambient: true,
-  sidebarOpen: true,
+  sidebarOpen: typeof window === "undefined" ? true : window.innerWidth >= 768,
   abort: null,
 
   loadThreads: async () => {
