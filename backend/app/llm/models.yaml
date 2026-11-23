@@ -28,18 +28,27 @@ tiers:
     - nvidia:minimaxai/minimax-m3.1-flash
     - openrouter:google/gemma-4-31b-it:free
 
-  agent:                    # tool calling (ReAct + deep research)
+  agent:                    # tool calling with small contexts (quick ReAct + research subagents)
     - groq:openai/gpt-oss-120b
-    - groq:qwen/qwen3.8-27b
-    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
-    - gemini:gemini-3.8-flash
-    - gemini:gemini-3.5-flash
     - nvidia:minimaxai/minimax-m3.1-flash
-    - mistral:mistral-small-latest
+    - groq:qwen/qwen3.8-27b
+    - gemini:gemini-3.8-flash
     - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
+    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
+    - gemini:gemini-3.5-flash
+    - mistral:mistral-small-latest
+
+  deep:                     # deep-research orchestrator: big, growing context -> high-TPM providers first
+    - nvidia:minimaxai/minimax-m3.1-flash
+    - gemini:gemini-3.8-flash
+    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
+    - gemini:gemini-3.5-flash
+    - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
+    - groq:openai/gpt-oss-120b
 
   long_context:             # answer synthesis over many sources (1M-token Gemini first)
     - gemini:gemini-3.8-flash
+    - nvidia:minimaxai/minimax-m3.1-flash
     - nvidia:nvidia/nemotron-3-ultra-550b-a55b
     - groq:openai/gpt-oss-120b
     - gemini:gemini-3.5-flash

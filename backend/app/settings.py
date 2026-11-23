@@ -40,9 +40,10 @@ class Settings(BaseSettings):
 
     # agent budgets
     quick_max_model_calls: int = 6
-    deep_max_model_calls: int = 24
+    deep_max_model_calls: int = 16
+    deep_timeout_seconds: float = 170
     max_sources_in_context: int = 14
-    chunk_tokens_per_page: int = 1200
+    chunk_tokens_per_page: int = 800
 
 
 @lru_cache

@@ -38,7 +38,10 @@ _UNAVAILABLE_TERMS = (
     "end of life", "not found for api version", "is not supported for", "no endpoints found",
 )
 _TOO_LARGE_TERMS = ("context_length", "context length", "maximum context", "too large", "too many tokens", "request entity too large", "reduce the length")
-_BAD_OUTPUT_TERMS = ("tool_use_failed", "failed to call a function", "failed_generation", "invalid tool call", "output_parse_failed")
+_BAD_OUTPUT_TERMS = (
+    "tool_use_failed", "failed to call a function", "failed_generation", "invalid tool call", "output_parse_failed",
+    "tool call validation failed", "which was not in request.tools",
+)
 _TRANSIENT_TERMS = ("timeout", "timed out", "overloaded", "service unavailable", "capacity", "connection", "temporarily", "bad gateway", "internal server error")
 
 _NETWORK_ERROR_NAMES = {
@@ -62,8 +65,10 @@ def classify_error(err: BaseException) -> ErrorKind:
     status = status_code_of(err)
     msg = str(err).lower()
     name = type(err).__name__
+    # wrappers (e.g. langchain_openai.OpenAITimeoutError) subclass the SDK errors: match on the whole MRO
+    names = {c.__name__ for c in type(err).__mro__}
 
-    if status == 429 or name == "RateLimitError" or any(t in msg for t in _RATE_TERMS):
+    if status == 429 or "RateLimitError" in names or any(t in msg for t in _RATE_TERMS):
         return ErrorKind.DAILY_LIMIT if any(t in msg for t in _DAILY_TERMS) else ErrorKind.RATE_LIMIT
     if status in (404, 410) or any(t in msg for t in _UNAVAILABLE_TERMS):
         return ErrorKind.MODEL_UNAVAILABLE
@@ -79,7 +84,7 @@ def classify_error(err: BaseException) -> ErrorKind:
         return ErrorKind.INCOMPATIBLE
     if (status is not None and status >= 500) or status == 408:
         return ErrorKind.TRANSIENT
-    if name in _NETWORK_ERROR_NAMES or isinstance(err, (TimeoutError, ConnectionError)):
+    if names & _NETWORK_ERROR_NAMES or isinstance(err, (TimeoutError, ConnectionError)):
         return ErrorKind.TRANSIENT
     if status is None and any(t in msg for t in _TRANSIENT_TERMS) and name.endswith("Error") and "API" in name:
         return ErrorKind.TRANSIENT

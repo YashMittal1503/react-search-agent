@@ -87,33 +87,55 @@ async def searxng(query: str, n: int, recency_days: int | None, news: bool) -> l
     return [h for h in (_hit(x.get("url"), x.get("title"), x.get("content"), "searxng", x.get("publishedDate")) for x in data.get("results", [])[:n]) if h]
 
 
-# ── DuckDuckGo (ddgs, no key) ───────────────────────────────────────────────
+# ── ddgs metasearch (no key): rotate engines, because each one throttles bursts differently ──
 def _ddg_timelimit(days: int | None) -> str | None:
     if not days:
         return None
     return "d" if days <= 1 else "w" if days <= 7 else "m" if days <= 31 else "y"
 
 
+_DDG_SLOTS = asyncio.Semaphore(2)
+_TEXT_BACKENDS = ["duckduckgo", "yandex", "google", "yahoo", "brave", "mojeek", "auto"]
+_NEWS_BACKENDS = ["duckduckgo", "yahoo", "bing", "auto"]
+_backend_cooldown: dict[str, float] = {}
+
+
 async def duckduckgo(query: str, n: int, recency_days: int | None, news: bool) -> list[dict]:
+    """Despite the name, this is the ddgs metasearch: DuckDuckGo first, then other engines."""
+    import time as _time
+
     from ddgs import DDGS
 
-    def run() -> list[dict]:
+    def run(backend: str, q: str) -> list[dict]:
+        d = DDGS(timeout=10)
         try:
-            return _run()
-        except Exception as err:  # ddgs raises when a query simply has no hits
+            if news:
+                rows = d.news(q, max_results=n, timelimit=_ddg_timelimit(recency_days), backend=backend)
+                return [h for h in (_hit(x.get("url"), x.get("title"), x.get("body"), f"ddgs:{backend}", x.get("date")) for x in rows) if h]
+            rows = d.text(q, max_results=n + 4, timelimit=_ddg_timelimit(recency_days), backend=backend)
+            return [h for h in (_hit(x.get("href"), x.get("title"), x.get("body"), f"ddgs:{backend}") for x in rows) if h][:n]
+        except Exception as err:
             if "no results" in str(err).lower():
                 return []
             raise
 
-    def _run() -> list[dict]:
-        d = DDGS(timeout=12)
-        if news:
-            rows = d.news(query, max_results=n, timelimit=_ddg_timelimit(recency_days))
-            return [h for h in (_hit(x.get("url"), x.get("title"), x.get("body"), "duckduckgo", x.get("date")) for x in rows) if h]
-        rows = d.text(query, max_results=n + 3, timelimit=_ddg_timelimit(recency_days))
-        return [h for h in (_hit(x.get("href"), x.get("title"), x.get("body"), "duckduckgo") for x in rows) if h][:n]
-
-    return await asyncio.to_thread(run)
+    queries = [query]
+    if "site:" in query:  # engines often return nothing for site: filters; retry without
+        queries.append(" ".join(w for w in query.split() if not w.startswith("site:")))
+    async with _DDG_SLOTS:
+        for q in queries:
+            for backend in (_NEWS_BACKENDS if news else _TEXT_BACKENDS):
+                if _backend_cooldown.get(backend, 0) > _time.time():
+                    continue
+                try:
+                    hits = await asyncio.to_thread(run, backend, q)
+                except Exception as err:  # noqa: BLE001
+                    logger.info("ddgs backend %s failed: %s", backend, str(err)[:120])
+                    _backend_cooldown[backend] = _time.time() + 60
+                    continue
+                if hits:
+                    return hits
+    return []
 
 
 # ── Google News RSS (news fallback, no key) ─────────────────────────────────

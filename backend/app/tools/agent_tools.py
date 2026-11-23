@@ -34,7 +34,7 @@ def _format_hits(hits: list[dict], kind: str) -> str:
 async def web_search(
     query: Annotated[str, "A focused search query. Include place/date words when they matter."],
     recency_days: Annotated[int | None, "Only results from the last N days (1=today, 7=week). Omit for timeless facts."] = None,
-    max_results: Annotated[int, "Number of results, 3-10."] = 6,
+    max_results: Annotated[int, "Number of results, 3-10."] = 5,
 ) -> str:
     """Search the web. Returns numbered sources [S#] with title, domain and snippet.
     Snippets are often enough for simple facts; call fetch_page on the best 1-3 sources for details."""
@@ -122,7 +122,7 @@ async def get_weather(
     run = current_run()
     sid = run.step("weather", location)
     try:
-        data = await _weather(location, days)
+        data = await _weather(location, max(days, 7))   # the widget always shows a week
     except Exception as err:  # noqa: BLE001
         run.step_update(sid, "failed", detail=str(err)[:80])
         return f"Weather service error: {err}. Try web_search for '{location} weather'."

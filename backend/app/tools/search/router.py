@@ -45,6 +45,7 @@ async def search(query: str, n: int = 8, recency_days: int | None = None, news: 
                 if c not in seen:
                     seen.add(c)
                     unique.append(h)
+            name = unique[0].get("provider", name)
             cache.set(key, {"hits": unique, "provider": name}, ttl=900 if (news or recency_days) else 6 * 3600)
             return unique, name
         errors.append(f"{name}: no results")

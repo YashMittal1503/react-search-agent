@@ -15,7 +15,8 @@ import logging
 from typing import Annotated, Any, TypedDict
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelCallLimitMiddleware
+from langchain.agents.middleware import ContextEditingMiddleware, ModelCallLimitMiddleware, ToolCallLimitMiddleware
+from langchain.agents.middleware.context_editing import ClearToolUsesEdit
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
@@ -98,6 +99,16 @@ def _research_input(state: State) -> list:
     return [HumanMessage(content)]
 
 
+def _trim_context(trigger_tokens: int) -> ContextEditingMiddleware:
+    """Free tiers have tiny TPM budgets (Groq: 8K/min). Old tool outputs are replaced by a placeholder once the
+    context passes ``trigger_tokens``; nothing is lost, because every page excerpt stays in the SourceRegistry
+    and the writer reads it from there."""
+    return ContextEditingMiddleware(edits=[ClearToolUsesEdit(
+        trigger=trigger_tokens, keep=2, exclude_tools=("write_todos",),
+        placeholder="[older tool output removed to save tokens; its sources remain citable by id]",
+    )])
+
+
 async def quick_research(state: State, config: RunnableConfig) -> dict:
     run = current_run()
     s = get_settings()
@@ -105,7 +116,7 @@ async def quick_research(state: State, config: RunnableConfig) -> dict:
         model=chat_model("agent", temperature=0.1),
         tools=QUICK_TOOLS,
         system_prompt=prompts.QUICK.format(today=_today(run), tz=run.timezone, locale=run.locale, max_calls=s.quick_max_model_calls),
-        middleware=[ModelCallLimitMiddleware(run_limit=s.quick_max_model_calls, exit_behavior="end")],
+        middleware=[ModelCallLimitMiddleware(run_limit=s.quick_max_model_calls, exit_behavior="end"), _trim_context(4500)],
         name="quick_research",
     )
     notes = await _run_agent(agent, _research_input(state), config, timeout=75)
@@ -125,17 +136,21 @@ async def deep_research(state: State, config: RunnableConfig) -> dict:
         "system_prompt": prompts.RESEARCHER.format(today=today),
         "tools": RESEARCH_TOOLS,
         "model": chat_model("agent", temperature=0.1),
-        "middleware": [ModelCallLimitMiddleware(run_limit=8, exit_behavior="end")],
+        "middleware": [ModelCallLimitMiddleware(run_limit=6, exit_behavior="end"), _trim_context(3500)],
     }
     agent = create_deep_agent(
-        model=chat_model("agent", temperature=0.1),
+        model=chat_model("deep", temperature=0.1),
         tools=RESEARCH_TOOLS,
         system_prompt=prompts.DEEP.format(today=today, tz=run.timezone, locale=run.locale, max_calls=s.deep_max_model_calls),
         subagents=[researcher],
-        middleware=[ModelCallLimitMiddleware(run_limit=s.deep_max_model_calls, exit_behavior="end")],
+        middleware=[
+            ModelCallLimitMiddleware(run_limit=s.deep_max_model_calls, exit_behavior="end"),
+            ToolCallLimitMiddleware(tool_name="web_search", run_limit=12),   # free search engines throttle bursts
+            _trim_context(9000),
+        ],
         name="deep_research",
     )
-    notes = await _run_agent(agent, _research_input(state), config, timeout=240, track_todos=True)
+    notes = await _run_agent(agent, _research_input(state), config, timeout=s.deep_timeout_seconds, track_todos=True)
     return {"notes": notes}
 
 

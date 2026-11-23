@@ -5,15 +5,7 @@ import time
 
 import pytest
 
-from app.llm.llm_pool import (
-    ErrorKind,
-    LLMRouter,
-    PoolConfig,
-    classify_error,
-    load_keys,
-    parse_duration,
-    retry_after_seconds,
-)
+from app.llm.llm_pool import ErrorKind, LLMRouter, PoolConfig, classify_error, load_keys, parse_duration, retry_after_seconds
 from app.llm.llm_pool.router import AllProvidersFailed
 
 
@@ -164,3 +156,14 @@ def test_overloaded_model_skips_remaining_keys():
 
     assert asyncio.run(r.run("t", fn)) == "groq:m2"
     assert sum("groq:m1" in c for c in calls) == 1    # second key not wasted on an overloaded model
+
+
+def test_wrapped_timeout_is_transient():
+    class APITimeoutError(Exception):
+        pass
+
+    class OpenAITimeoutError(APITimeoutError):
+        pass
+
+    assert classify_error(OpenAITimeoutError("Request timed out.")) is ErrorKind.TRANSIENT
+    assert classify_error(FakeErr("Tool call validation failed: attempted to call tool 'x' which was not in request.tools", 400)) is ErrorKind.BAD_OUTPUT
