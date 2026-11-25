@@ -41,7 +41,7 @@ export function EmptyState() {
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-strong rounded-3xl px-6 py-5">
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">What do you want to know?</h1>
         <p className="mt-2 text-sm text-muted">
-          A ReAct search agent that reads the live web and cites every claim. The background follows your topic.
+          A ReAct search agent that reads the live web and cites every claim.
         </p>
       </motion.div>
       <div className="mt-8 grid w-full gap-2.5 sm:grid-cols-2" onMouseLeave={() => setPreviewScene(null)}>
