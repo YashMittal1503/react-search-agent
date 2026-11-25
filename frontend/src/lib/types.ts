@@ -62,12 +62,13 @@ export interface Todo {
 export interface WeatherWidget {
   type: "weather";
   source_id: number;
-  location: { name: string; admin1?: string; country?: string; timezone?: string };
+  // approximate: the exact place (e.g. a neighbourhood) wasn't found; this is the enclosing city named `requested`
+  location: { name: string; admin1?: string; country?: string; timezone?: string; approximate?: boolean; requested?: string };
   current: {
     time: string; temperature_c: number; feels_like_c: number; humidity: number; wind_kmh: number;
     precipitation_mm: number; condition: string; is_day: boolean;
   };
-  hourly: { time: string; temperature_c: number; precip_prob: number | null; condition: string }[];
+  hourly: { time: string; temperature_c: number; precip_prob: number | null; condition: string; is_day?: boolean }[];
   daily: { date: string; condition: string; scene: string; max_c: number; min_c: number; precip_prob: number; sunrise: string; sunset: string }[];
   scene?: { condition: string; is_day: boolean };
 }

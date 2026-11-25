@@ -153,7 +153,10 @@ async def get_weather(
                "daily": data["daily"][:days], "next_hours": data["hourly"][:12:3]}
     text = json.dumps(compact, ensure_ascii=False)
     src.content = text[:3000]
-    return f"[S{src.id}] Open-Meteo data for {place} (temperatures in °C, wind km/h):\n{text}"
+    # Tell the model when a neighbourhood fell back to its city, so the answer says so instead of retrying.
+    note = (f"Note: {loc['requested']!r} is not in the weather gazetteer; this is the nearest city, {place}.\n"
+            if loc.get("approximate") else "")
+    return f"[S{src.id}] Open-Meteo data for {place} (temperatures in °C, wind km/h):\n{note}{text}"
 
 
 @tool

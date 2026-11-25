@@ -1,6 +1,7 @@
 "use client";
 
 import { Cloud, CloudFog, CloudLightning, CloudRain, CloudSun, Droplets, Moon, Snowflake, Sun, Wind } from "lucide-react";
+import { useState } from "react";
 import type { NewsWidget, WeatherWidget, Widget } from "@/lib/types";
 import { Favicon, formatDate } from "./Citation";
 
@@ -20,24 +21,50 @@ function CondIcon({ scene, day = true, className }: { scene: string; day?: boole
   }
 }
 
+type Unit = "C" | "F";
 const f = (c: number) => Math.round(c * 9 / 5 + 32);   // °C -> °F
-/** US-English browsers get Fahrenheit; everyone else Celsius (data always arrives in °C). */
-const useF = () => typeof navigator !== "undefined" && navigator.language === "en-US";
+const UNIT_KEY = "rsa-temp-unit";
+// IANA zones in the US (plus its territories that use °F). Matched as prefixes.
+const US_ZONES = /^(America\/(New_York|Chicago|Denver|Phoenix|Los_Angeles|Anchorage|Juneau|Sitka|Metlakatla|Nome|Yakutat|Adak|Boise|Detroit|Indiana|Kentucky|Menominee|North_Dakota)|Pacific\/(Honolulu|Guam|Saipan|Pago_Pago)|America\/Puerto_Rico)/;
+
+/**
+ * Which unit to show. An explicit choice (the °C/°F toggle) is remembered; otherwise °F only for viewers whose
+ * timezone is in the US. The browser language is NOT used: "en-US" is the default on most machines worldwide,
+ * which made Delhi's 19 °C show up as a bare "67°".
+ */
+function initialUnit(): Unit {
+  try {
+    const saved = localStorage.getItem(UNIT_KEY);
+    if (saved === "C" || saved === "F") return saved;
+  } catch {}
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  return US_ZONES.test(tz) ? "F" : "C";
+}
 
 /** Current conditions, the next 12 hours and a 5-day strip. Times are local to the place, not the viewer. */
 function WeatherCard({ w }: { w: WeatherWidget }) {
-  const fahrenheit = useF();
-  const t = (c: number) => (fahrenheit ? `${f(c)}°` : `${Math.round(c)}°`);
+  const [unit, setUnit] = useState<Unit>(initialUnit);
+  const choose = (u: Unit) => {
+    setUnit(u);
+    try { localStorage.setItem(UNIT_KEY, u); } catch {}
+  };
+  // Small numbers carry just "°"; the big reading and the toggle always name the unit, so it's never ambiguous.
+  const t = (c: number) => `${unit === "F" ? f(c) : Math.round(c)}°`;
   const today = w.daily[0];
   const place = [w.location.name, w.location.admin1, w.location.country].filter(Boolean).join(", ");
   return (
     <div className="glass rounded-2xl p-4" data-testid="weather-widget">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-sm text-muted">{place}</div>
+          <div className="text-sm text-muted">
+            {place}
+            {w.location.approximate && w.location.requested && <span className="text-subtle"> · nearest to {w.location.requested}</span>}
+          </div>
           <div className="mt-1 flex items-center gap-3">
             <CondIcon scene={w.scene?.condition || today?.scene || "cloudy"} day={w.current.is_day} className="h-10 w-10" />
-            <span className="text-5xl font-semibold tracking-tight">{t(w.current.temperature_c)}</span>
+            <span className="text-5xl font-semibold tracking-tight" data-testid="weather-temp">
+              {t(w.current.temperature_c)}<span className="align-top text-2xl font-medium text-muted">{unit}</span>
+            </span>
             <div className="text-sm leading-tight">
               <div className="font-medium">{w.current.condition}</div>
               <div className="text-muted">Feels like {t(w.current.feels_like_c)}</div>
@@ -45,6 +72,12 @@ function WeatherCard({ w }: { w: WeatherWidget }) {
           </div>
         </div>
         <div className="space-y-1 text-right text-xs text-muted">
+          <div className="ml-auto flex w-fit rounded-full bg-surface-hover p-0.5" role="radiogroup" aria-label="Temperature unit">
+            {(["C", "F"] as const).map((u) => (
+              <button key={u} role="radio" aria-checked={unit === u} onClick={() => choose(u)}
+                className={`rounded-full px-2 py-0.5 font-medium ${unit === u ? "bg-surface-strong text-fg shadow-sm" : "hover:text-fg"}`}>°{u}</button>
+            ))}
+          </div>
           {today && <div>H {t(today.max_c)} · L {t(today.min_c)}</div>}
           <div className="flex items-center justify-end gap-1"><Droplets className="h-3 w-3" /> {w.current.humidity}%</div>
           <div className="flex items-center justify-end gap-1"><Wind className="h-3 w-3" /> {Math.round(w.current.wind_kmh)} km/h</div>
@@ -54,7 +87,7 @@ function WeatherCard({ w }: { w: WeatherWidget }) {
         {w.hourly.slice(0, 12).map((h) => (
           <div key={h.time} className="flex w-12 shrink-0 flex-col items-center gap-1 text-xs">
             <span className="text-muted">{h.time.slice(11, 16)}</span>
-            <CondIcon scene={h.condition} className="h-4 w-4" />
+            <CondIcon scene={h.condition} day={h.is_day ?? true} className="h-4 w-4" />
             <span className="font-medium">{t(h.temperature_c)}</span>
             {h.precip_prob != null && h.precip_prob > 0 && <span className="text-[10px] text-sky-500">{h.precip_prob}%</span>}
           </div>

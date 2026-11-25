@@ -30,21 +30,30 @@ WMO = {
 async def geocode(name: str, client: httpx.AsyncClient) -> dict[str, Any] | None:
     """Resolve a place name to Open-Meteo's best match (lat/lon, country, region), or ``None``.
 
-    Tries the full name, then just the part before the first comma. With "City, Region" input it prefers the
-    candidate whose country or state appears in the input, so "Paris, Texas" doesn't resolve to France.
+    Tries the full name, then each comma-separated part from most to least specific. Open-Meteo's gazetteer has
+    cities and towns but few neighbourhoods, so "Moti Nagar, New Delhi" falls back to "New Delhi" in one call
+    instead of the agent retrying with different spellings. With "City, Region" input it prefers the candidate
+    whose country or state appears in the input, so "Paris, Texas" doesn't resolve to France.
+
+    The returned dict gets ``approximate=True`` when only a broader part of the name matched, so the answer can
+    say it is reporting the nearest city.
     """
-    variants = [name, name.split(",")[0].strip()]
+    parts = [p.strip() for p in name.split(",") if p.strip()]
+    variants = [name, *parts]
     for q in dict.fromkeys(v for v in variants if v):
         r = await client.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": q, "count": 5, "format": "json"})
         r.raise_for_status()
         results = r.json().get("results") or []
         if results:
             hint = name.lower()
+            approximate = bool(parts) and q not in (name, parts[0])   # matched a broader part, e.g. the city
+            best = results[0]
             # prefer a result whose country/admin matches the rest of the query ("Paris, Texas")
             for res in results:
                 if any((res.get(k) or "").lower() in hint for k in ("country", "admin1") if res.get(k)) and "," in name:
-                    return res
-            return results[0]
+                    best = res
+                    break
+            return {**best, "approximate": approximate}
     return None
 
 
@@ -67,7 +76,7 @@ async def get_weather(location: str, days: int = 5) -> dict[str, Any]:
             # timezone=auto: times come back in the *place's* local time, which is what "tonight" means there.
             "latitude": place["latitude"], "longitude": place["longitude"], "timezone": "auto", "forecast_days": days,
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,weather_code,wind_speed_10m,wind_direction_10m,cloud_cover",
-            "hourly": "temperature_2m,precipitation_probability,weather_code",
+            "hourly": "temperature_2m,precipitation_probability,weather_code,is_day",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset,uv_index_max",
         }
         r = await client.get("https://api.open-meteo.com/v1/forecast", params=params)
@@ -85,6 +94,8 @@ async def get_weather(location: str, days: int = 5) -> dict[str, Any]:
     result = {
         "location": {
             "name": place.get("name"), "admin1": place.get("admin1"), "country": place.get("country"),
+            # True when the exact place (e.g. a neighbourhood) wasn't found and this is the enclosing city.
+            "approximate": place.get("approximate", False), "requested": location,
             "latitude": place["latitude"], "longitude": place["longitude"], "timezone": data.get("timezone"),
         },
         "current": {
@@ -96,7 +107,9 @@ async def get_weather(location: str, days: int = 5) -> dict[str, Any]:
         "hourly": [
             {"time": times[i], "temperature_c": hourly["temperature_2m"][i],
              "precip_prob": (hourly.get("precipitation_probability") or [None] * len(times))[i],
-             "condition": WMO.get(hourly["weather_code"][i], ("", "cloudy"))[1]}
+             "condition": WMO.get(hourly["weather_code"][i], ("", "cloudy"))[1],
+             # per-hour day/night, so the UI shows a moon (not a sun) for clear hours after sunset
+             "is_day": bool((hourly.get("is_day") or [1] * len(times))[i])}
             for i in range(start, min(start + 24, len(times)))
         ],
         "daily": [
