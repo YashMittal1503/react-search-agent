@@ -22,7 +22,7 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import ConfigDict, Field
 
-from .router import Attempt, LLMRouter
+from .router import Attempt, LLMRouter, estimate_tokens
 
 _DROP_KWARGS = ("ls_structured_output_format",)
 
@@ -92,6 +92,11 @@ class PooledChatModel(BaseChatModel):
         result.llm_output = {**(result.llm_output or {}), "llm_pool_target": attempt.target.id}
         return result
 
+    def _estimate(self, messages: list[BaseMessage], kwargs: dict[str, Any]) -> int:
+        """Prompt + reserved output tokens, so the router can skip targets too small for the request."""
+        parts = [(m.content, getattr(m, "tool_calls", None) or None) for m in messages]
+        return estimate_tokens(parts, kwargs.get("tools")) + (kwargs.get("max_tokens") or self.max_tokens or 0)
+
     @staticmethod
     def _clean(kwargs: dict[str, Any]) -> dict[str, Any]:
         return {k: v for k, v in kwargs.items() if k not in _DROP_KWARGS and v is not None}
@@ -110,7 +115,7 @@ class PooledChatModel(BaseChatModel):
             result = await self._chat(attempt)._agenerate(messages, stop=stop, **kwargs)
             return self._tag(result, attempt)
 
-        return await self.router.run(self.tier, call)
+        return await self.router.run(self.tier, call, est_tokens=self._estimate(messages, kwargs))
 
     def _generate(
         self,
@@ -142,7 +147,7 @@ class PooledChatModel(BaseChatModel):
                     first = False
                 yield chunk
 
-        async for chunk in self.router.run_stream(self.tier, call):
+        async for chunk in self.router.run_stream(self.tier, call, est_tokens=self._estimate(messages, kwargs)):
             if run_manager:
                 await run_manager.on_llm_new_token(chunk.text, chunk=chunk)
             yield chunk

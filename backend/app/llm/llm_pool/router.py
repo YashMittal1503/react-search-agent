@@ -1,7 +1,10 @@
 """The fallback engine: run a call across every (tier target x key) until one succeeds.
 
-Attempt order for a tier:
-  1. every *ready* key of every target, in tier order (round-robin within a provider);
+A tier's chain is its own targets followed by those of its ``fallbacks`` tiers. Targets that cannot fit
+the request (``max_request_tokens`` / ``limits``, or a limit learned from an earlier 413) are skipped up front.
+
+Attempt order for a chain:
+  1. every *ready* key of every target, in chain order (round-robin within a provider);
   2. then keys that are cooling down, soonest recovery first;
   3. if nothing was attempted because everything is cooling, wait for the soonest key
      (up to ``max_wait_seconds``) and go again.
@@ -16,15 +19,45 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, TypeVar
 
 from .config import PoolConfig, ProviderSpec, Target
-from .errors import ErrorKind, classify_error, retry_after_seconds, status_code_of
+from .errors import ErrorKind, classify_error, retry_after_seconds, status_code_of, token_limit_of
 from .keys import load_keys
 from .pool import KeySlot, ProviderKeyPool
 
 logger = logging.getLogger("llm_pool")
 T = TypeVar("T")
+
+_TRUE = {"1", "true", "yes", "on"}
+DAILY_FALLBACK_SECONDS = 3600.0   # daily limit, no reset time known: look again in an hour
+DAILY_MIN_SECONDS = 60.0
+
+
+def seconds_until_reset(tz_name: str, now: datetime | None = None) -> float:
+    """Seconds until the next local midnight in ``tz_name`` (e.g. "UTC", "America/Los_Angeles")."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = timezone.utc if tz_name.upper() == "UTC" else ZoneInfo(tz_name)
+    except Exception:  # no tz database: assume Pacific standard time, the only non-UTC reset we ship
+        tz = timezone(timedelta(hours=-8)) if "los_angeles" in tz_name.lower() else timezone.utc
+    local = (now or datetime.now(timezone.utc)).astimezone(tz)
+    midnight = (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (midnight - local).total_seconds()
+
+
+def estimate_tokens(*parts: Any) -> int:
+    """Rough token count (~4 characters per token) of messages, tools or any JSON-able payload."""
+    import json
+
+    chars = 0
+    for part in parts:
+        if part is None:
+            continue
+        chars += len(part) if isinstance(part, str) else len(json.dumps(part, default=str, ensure_ascii=False))
+    return chars // 4
 
 try:  # optional telemetry
     import logfire as _logfire
@@ -67,10 +100,13 @@ class LLMRouter:
     def __init__(self, config: PoolConfig, env: Mapping[str, str] | None = None):
         self.config = config
         env = os.environ if env is None else env
-        self.pools: dict[str, ProviderKeyPool] = {
-            name: ProviderKeyPool(name, load_keys(spec.env_prefix, env)) for name, spec in config.providers.items()
-        }
+        self.pools: dict[str, ProviderKeyPool] = {}
+        for name, spec in config.providers.items():
+            shared = env.get(f"{spec.env_prefix}_SHARED_QUOTA")
+            shared_quota = spec.shared_quota if shared is None or not shared.strip() else shared.strip().lower() in _TRUE
+            self.pools[name] = ProviderKeyPool(name, load_keys(spec.env_prefix, env), shared_quota=shared_quota)
         self.stats: dict[str, dict[str, int]] = {}   # target id -> {ok, <error kind>...}
+        self.learned_limits: dict[str, int] = {}     # target id -> token ceiling named by a 413
 
     # ── introspection ────────────────────────────────────────────────────
     def targets(self, tier: str) -> list[Target]:
@@ -81,15 +117,31 @@ class LLMRouter:
     def key_counts(self) -> dict[str, int]:
         return {name: len(pool) for name, pool in self.pools.items()}
 
+    def request_limit(self, target: Target) -> int | None:
+        return self.learned_limits.get(target.id) or self.config.request_limit(target)
+
     def _record(self, target: Target, outcome: str) -> None:
         bucket = self.stats.setdefault(target.id, {})
         bucket[outcome] = bucket.get(outcome, 0) + 1
 
     # ── planning ─────────────────────────────────────────────────────────
+    def oversized(self, tier: str, est_tokens: int | None, errors: list | None = None) -> set[int]:
+        """Chain positions whose request limit is below ``est_tokens`` (skipped without a call)."""
+        if not est_tokens:
+            return set()
+        skip = set()
+        for i, target in enumerate(self.config.chain(tier)):
+            limit = self.request_limit(target)
+            if limit and est_tokens > limit:
+                skip.add(i)
+                if errors is not None:
+                    errors.append((target.id, ErrorKind.REQUEST_TOO_LARGE, f"~{est_tokens} tokens > limit {limit}"))
+        return skip
+
     def plan(self, tier: str, skip: set[int] | None = None) -> tuple[list[Attempt], list[Attempt]]:
         ready, cooling = [], []
         now = time.time()
-        for i, target in enumerate(self.config.tiers[tier]):
+        for i, target in enumerate(self.config.chain(tier)):
             if skip and i in skip:
                 continue
             pool = self.pools.get(target.provider)
@@ -103,20 +155,32 @@ class LLMRouter:
         return ready, cooling
 
     # ── error handling ───────────────────────────────────────────────────
+    def daily_cooldown(self, spec: ProviderSpec, wait: float | None) -> float:
+        """How long a daily limit lasts: until the provider's reset time if it has one (its Retry-After
+        is often a per-minute hint), else the Retry-After it sent, else an hour."""
+        if spec.daily_reset:
+            return max(wait or 0.0, seconds_until_reset(spec.daily_reset), DAILY_MIN_SECONDS)
+        return max(wait + 1, DAILY_MIN_SECONDS) if wait is not None else DAILY_FALLBACK_SECONDS
+
     def handle_error(self, attempt: Attempt, err: BaseException, skip: set[int]) -> ErrorKind:
         kind = classify_error(err)
         t, pool, key = attempt.target, attempt.pool, attempt.key
         self._record(t, kind.value)
         if kind is ErrorKind.RATE_LIMIT:
             wait = retry_after_seconds(err)
-            pool.cool_down(key, t.model, wait + 1 if wait is not None else pool.backoff_seconds(key, t.model), "rate limited")
+            pool.cool_down_quota(key, t.model, wait + 1 if wait is not None else pool.backoff_seconds(key, t.model), "rate limited")
         elif kind is ErrorKind.DAILY_LIMIT:
-            wait = retry_after_seconds(err)
-            pool.cool_down(key, t.model, max(wait or 0, 900.0) if wait else 3600.0, "daily limit")
+            pool.cool_down_quota(key, t.model, self.daily_cooldown(attempt.spec, retry_after_seconds(err)), "daily limit")
         elif kind is ErrorKind.MODEL_UNAVAILABLE:
             pool.disable_model(t.model)
             skip.add(attempt.index)
-        elif kind in (ErrorKind.REQUEST_TOO_LARGE, ErrorKind.BAD_OUTPUT, ErrorKind.INCOMPATIBLE):
+        elif kind is ErrorKind.REQUEST_TOO_LARGE:
+            skip.add(attempt.index)       # no key can serve this request; remember the ceiling for next time
+            limit = token_limit_of(err)
+            if limit and limit < (self.request_limit(t) or 10**9):
+                self.learned_limits[t.id] = limit
+                logger.info("[%s] learned request limit %d tokens", t.id, limit)
+        elif kind in (ErrorKind.BAD_OUTPUT, ErrorKind.INCOMPATIBLE):
             skip.add(attempt.index)       # this request won't work on this target; the key is fine
         elif kind is ErrorKind.AUTH:
             pool.cool_down(key, None, 3600.0, "auth failed")
@@ -157,6 +221,9 @@ class LLMRouter:
             for attempt in fresh:
                 if attempt.index in skip:
                     continue
+                # an earlier failure in this round may have cooled this key too (shared quota, overload)
+                if not attempt.slot.is_ready(attempt.target.model) or attempt.pool.model_disabled(attempt.target.model):
+                    continue
                 if attempts >= self.config.max_attempts:
                     errors.append(("*", ErrorKind.FATAL, f"max_attempts={self.config.max_attempts} reached"))
                     return
@@ -164,10 +231,16 @@ class LLMRouter:
                 tried.add((attempt.index, attempt.key))
                 yield attempt
 
-    async def run(self, tier: str, fn: Callable[[Attempt], Awaitable[T]]) -> T:
-        """Run ``fn(attempt)`` until one attempt succeeds."""
+    def _start(self, tier: str, est_tokens: int | None, errors: list) -> set[int]:
+        if tier not in self.config.tiers:
+            raise KeyError(f"unknown tier {tier!r}; known: {sorted(self.config.tiers)}")
+        return self.oversized(tier, est_tokens, errors)
+
+    async def run(self, tier: str, fn: Callable[[Attempt], Awaitable[T]], est_tokens: int | None = None) -> T:
+        """Run ``fn(attempt)`` until one attempt succeeds. ``est_tokens`` (prompt + max output) lets the
+        router skip targets that are too small for the request without calling them."""
         errors: list[tuple[str, ErrorKind, str]] = []
-        skip: set[int] = set()
+        skip = self._start(tier, est_tokens, errors)
         async for attempt in self._attempts(tier, skip, errors):
             with _span("LLM {provider}/{model}", provider=attempt.target.provider, model=attempt.target.model,
                        key_id=attempt.slot.masked_key, tier=tier):
@@ -186,10 +259,12 @@ class LLMRouter:
             return result
         raise AllProvidersFailed(tier, errors)
 
-    async def run_stream(self, tier: str, fn: Callable[[Attempt], AsyncIterator[T]]) -> AsyncIterator[T]:
+    async def run_stream(
+        self, tier: str, fn: Callable[[Attempt], AsyncIterator[T]], est_tokens: int | None = None,
+    ) -> AsyncIterator[T]:
         """Stream from the first attempt that yields. Failover only happens before the first item."""
         errors: list[tuple[str, ErrorKind, str]] = []
-        skip: set[int] = set()
+        skip = self._start(tier, est_tokens, errors)
         async for attempt in self._attempts(tier, skip, errors):
             started = False
             try:
@@ -234,7 +309,7 @@ class LLMRouter:
             resp._llm_pool_target = a.target.id
             return resp
 
-        return await self.run(tier, call)
+        return await self.run(tier, call, est_tokens=estimate_tokens(messages, kwargs.get("tools")) + (kwargs.get("max_tokens") or 0))
 
     async def stream(self, tier: str, messages: list[dict], **kwargs: Any) -> AsyncIterator[str]:
         """Stream text deltas."""
@@ -247,5 +322,6 @@ class LLMRouter:
                 if chunk.choices and getattr(chunk.choices[0].delta, "content", None):
                     yield chunk.choices[0].delta.content
 
-        async for text in self.run_stream(tier, call):
+        est = estimate_tokens(messages, kwargs.get("tools")) + (kwargs.get("max_tokens") or 0)
+        async for text in self.run_stream(tier, call, est_tokens=est):
             yield text

@@ -8,16 +8,34 @@
 #   mistral     free "Experiment" mode, per-project caps.
 #   gemini      per-project caps shown in AI Studio; free-tier prompts may be used for training.
 #   openrouter  ":free" models: 20 RPM, 50 RPD (1K after a one-time $10). Failed calls count too.
+#   cerebras    no lasting free tier (one-time $5 trial that needs a card), so it is not used here.
 #   Several keys from ONE account share that account's quota; real headroom comes from more providers.
+#   If all of a provider's keys come from one account, set `shared_quota: true` below (or
+#   <PREFIX>_SHARED_QUOTA=true in .env): one 429 then cools every key instead of burning a call on each.
 
 max_wait_seconds: 20     # wait this long for a cooling key before giving up
 max_attempts: 20         # attempts per call across all targets and keys
 
 providers:
+  groq:
+    max_request_tokens: 8000   # free tier: 8K tokens/min per model, so a bigger request can never succeed
+  # gemini resets daily quotas at midnight Pacific and openrouter at midnight UTC (built-in defaults).
   openrouter:
     headers:
       HTTP-Referer: "https://github.com/YashMittal1503/react-search-agent"
       X-Title: "react-search-agent"
+
+# When a tier runs out, borrow the ready targets of these tiers before waiting on a cooling key.
+# (judge has none on purpose: it must stay a different model family from the agent.)
+fallbacks:
+  fast: [agent]
+  agent: [long_context]
+  deep: [agent, long_context]
+  long_context: [agent]
+
+# Per-target request ceilings, for models whose limit differs from their provider's.
+# 413s that name a limit ("Limit 6000, Requested 9000") are learned at runtime as well.
+limits: {}
 
 tiers:
   fast:                     # routing, classification, follow-ups (short prompts)
@@ -53,7 +71,6 @@ tiers:
     - groq:openai/gpt-oss-120b
     - gemini:gemini-3.5-flash
     - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
-    - nvidia:minimaxai/minimax-m3.1-flash
     - groq:qwen/qwen3.8-27b
     - gemini:gemini-3.5-flash-lite
 

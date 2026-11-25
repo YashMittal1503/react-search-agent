@@ -30,7 +30,9 @@ It runs entirely on **free** model and search tiers (Groq, Gemini, NVIDIA NIM, M
   evasion: when a site refuses, the agent uses another source. There's also an SSRF guard.
 - **Free-tier engineering.** [`llm-key-pool`](backend/app/llm/llm_pool) rotates keys round-robin with per-(key, model)
   cooldowns read from `Retry-After`. It classifies errors (429, daily quota, retired or overloaded model, malformed
-  tool call) and fails over across named YAML tiers. Context editing keeps agents under Groq's 8K tokens/min.
+  tool call) and fails over across named YAML tiers, borrowing from fallback tiers before it waits on a cooling key.
+  Requests too big for a model's limit (Groq's 8K tokens/min) skip it without a call, keys from one account cool
+  down together, and daily limits wait for the provider's reset time.
   It's also packaged as a reusable Claude Code skill.
 - **Ambient scenes driven by data.** The weather scene uses the actual forecast for the place you asked about
   (rain, snow, storm or fog, and day or night there). There are 10 scene families and 18 variants, built with CSS/SVG
@@ -60,20 +62,21 @@ More detail is in [docs/architecture.md](docs/architecture.md).
 
 ## Evaluation
 
-The golden set has **61 items across 17 categories**:
-- static and multi-hop facts;
+The golden set has **68 items across 18 categories** (76 turns). Every item states its difficulty and the route it should take (quick or deep):
+- static facts, multi-hop and **historical data series** (e.g. India's GDP growth 2010-2015);
 - live weather and news, checked for tool use and source freshness;
 - travel and comparison tasks graded by rubric;
 - false premises, unanswerable and ambiguous questions;
-- conflicting sources, math and dates, non-English and harmful requests;
-- **prompt injection** and **blocked, JS-only and PDF pages**, served by a local fixture site whose facts are fictional so grounding can't be faked.
+- conflicting sources, math and dates, long or rambling prompts, and harmful requests;
+- **multi-turn conversations**: follow-ups, pronouns, corrections, topic switches, an itinerary revision, and an injection that must not leak into the next turn;
+- **prompt injection** and **robustness** cases (read and cite, PDF, 403, 404, JS-only shell), served by a local fixture site whose facts are fictional so grounding can't be faked.
 
 Scoring combines deterministic assertions, citation validity, and an LLM-judge rubric plus claim-level
 faithfulness. Results can be attached to LangSmith traces.
 
 | Suite | Result |
 |---|---|
-| Offline CI (key pool, citation guard, fetch vs. fixtures, scoring) | 32 tests passing |
+| Offline CI (key pool, citation guard, fetch vs. fixtures, scoring) | 47 tests passing |
 | UI e2e + contrast (18 scenes × 2 themes) | 39 tests passing |
 | Scraper benchmark (35 real URLs, no headless browser) | **85.7%** usable text · median 4.0 s |
 | Live smoke eval (9 items, free tiers) | **8/9 passed**<br/>citation validity **1.0** · faithfulness **0.86** · rubric **0.88** · routing **1.0** · p50 17 s, deep itinerary 268 s ([report](backend/evals/reports/smoke-20261123-224234.md)) |

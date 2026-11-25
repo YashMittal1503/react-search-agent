@@ -13,6 +13,7 @@ from .config import PoolConfig
 from .errors import classify_error
 from .router import LLMRouter
 
+# A trivial tool used with --tools to check that a model can emit a tool call at all.
 _TOOL = {
     "type": "function",
     "function": {
@@ -24,6 +25,11 @@ _TOOL = {
 
 
 async def _probe(router: LLMRouter, target, tools: bool) -> tuple[str, str, float, str]:
+    """Send one tiny request to ``target`` with the provider's first key (no retries, no pool logic).
+
+    Returns:
+        ``(target id, status, seconds, detail)``; status is OK, NO_TOOL_CALL or the error kind in upper case.
+    """
     pool = router.pools[target.provider]
     slot = pool.slots[0]
     spec = router.config.providers[target.provider]
@@ -48,6 +54,11 @@ async def _probe(router: LLMRouter, target, tools: bool) -> tuple[str, str, floa
 
 
 async def main_async(config: str, tier: str | None, tools: bool) -> int:
+    """Probe every target of ``tier`` (or of all tiers) in parallel and print a table.
+
+    Returns:
+        Exit code: 1 if *no* target works, else 0.
+    """
     router = LLMRouter(PoolConfig.from_yaml(config))
     print("keys:", {k: v for k, v in router.key_counts().items() if v})
     tiers = [tier] if tier else list(router.config.tiers)
@@ -67,6 +78,7 @@ async def main_async(config: str, tier: str | None, tools: bool) -> int:
 
 
 def main() -> None:
+    """CLI entry point (loads ``.env`` from the current directory if python-dotenv is installed)."""
     import sys
 
     if hasattr(sys.stdout, "reconfigure"):

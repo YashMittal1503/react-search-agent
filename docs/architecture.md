@@ -47,7 +47,11 @@ the model.
 **3. Free-tier engineering.** The [`llm-key-pool`](../backend/app/llm/llm_pool) package (also a reusable Claude
 Code skill) rotates keys per provider and keeps cooldowns per (key, model), using `Retry-After` and
 "try again in 7m4s" messages. It classifies errors (rate limit, daily quota, retired model, too large, malformed
-tool call, overloaded, auth) and fails over across named tiers:
+tool call, overloaded, auth) and fails over across named tiers. Before calling anything it drops targets whose
+request ceiling (`max_request_tokens`, `limits`, or a "Limit 8000" learned from an earlier 413) is below the
+request's estimated size. When a tier runs dry it borrows the ready targets of its `fallbacks` tiers before it
+waits on a cooling key. Providers marked `shared_quota` cool every key on one 429, since they all draw on one
+account. Daily limits on Gemini (midnight Pacific) and OpenRouter (midnight UTC) last until the reset:
 
 | Tier | Used for | First choice |
 |---|---|---|

@@ -23,6 +23,7 @@ def mask_key(key: str) -> str:
 
 
 def _clean(value: str | None) -> str:
+    """Strip whitespace/quotes; return ``""`` for empty values and obvious placeholders."""
     v = (value or "").strip().strip('"').strip("'")
     # Ignore placeholders copied from .env.example files.
     if not v or "your_" in v.lower() or v.lower() in {"changeme", "xxx", "none", "null"}:
@@ -31,7 +32,15 @@ def _clean(value: str | None) -> str:
 
 
 def load_keys(prefix: str, env: Mapping[str, str] | None = None) -> list[str]:
-    """Collect every key configured for ``prefix`` (e.g. ``"GROQ"``)."""
+    """Collect every key configured for ``prefix`` (e.g. ``"GROQ"``).
+
+    Args:
+        prefix: the provider's env prefix.
+        env: where to read from (defaults to ``os.environ``; tests pass a dict).
+
+    Returns:
+        Keys in order: ``_API_KEYS`` list first, then ``_API_KEY``, ``_API_KEY_2``... by number, de-duplicated.
+    """
     env = os.environ if env is None else env
     prefix = prefix.upper()
     keys: list[str] = []

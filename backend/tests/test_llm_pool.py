@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import UTC
 
 import pytest
 
@@ -175,3 +176,133 @@ def test_wrapped_timeout_is_transient():
 
     assert classify_error(OpenAITimeoutError("Request timed out.")) is ErrorKind.TRANSIENT
     assert classify_error(FakeErr("Tool call validation failed: attempted to call tool 'x' which was not in request.tools", 400)) is ErrorKind.BAD_OUTPUT
+
+
+# ── phase 1: classification fixes, request ceilings, shared quotas, reset times, tier fallbacks ──────
+
+def test_groq_413_tpm_is_too_large_not_rate_limit():
+    err = FakeErr("Request too large for model openai/gpt-oss-120b on tokens per minute (TPM): "
+                  "Limit 8000, Requested 14210, please reduce your message size and try again.", 413)
+    assert classify_error(err) is ErrorKind.REQUEST_TOO_LARGE
+    from app.llm.llm_pool.errors import token_limit_of
+    assert token_limit_of(err) == 8000
+
+
+def test_rate_terms_need_word_boundaries():
+    assert classify_error(FakeErr("model gone, see https://docs.example/rpm-docs", 404)) is ErrorKind.MODEL_UNAVAILABLE
+    assert classify_error(FakeErr("unknown model 'tpmx-large'", 400)) is ErrorKind.MODEL_UNAVAILABLE
+
+
+def test_gemini_quota_minute_vs_day():
+    minute = FakeErr("You exceeded your current quota. quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier", 429)
+    day = FakeErr("You exceeded your current quota. quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier", 429)
+    short = FakeErr("RESOURCE_EXHAUSTED: quota exceeded. 'retryDelay': '20s'", 429)
+    bare = FakeErr("RESOURCE_EXHAUSTED: quota exceeded", 429)
+    assert classify_error(minute) is ErrorKind.RATE_LIMIT
+    assert classify_error(day) is ErrorKind.DAILY_LIMIT
+    assert classify_error(short) is ErrorKind.RATE_LIMIT
+    assert classify_error(bare) is ErrorKind.DAILY_LIMIT
+
+
+def test_oversized_request_skips_target_without_calling_it():
+    cfg = {**CFG, "providers": {"groq": {"max_request_tokens": 100}}}
+    r = LLMRouter(PoolConfig.from_dict(cfg), env=ENV)
+    calls = []
+
+    async def fn(a):
+        calls.append(a.target.id)
+        return a.target.id
+
+    assert asyncio.run(r.run("t", fn, est_tokens=500)) == "gemini:g1"
+    assert calls == ["gemini:g1"]
+    assert asyncio.run(r.run("t", fn, est_tokens=50)) == "groq:m1"
+
+
+def test_413_skips_target_learns_limit_and_keeps_keys_ready():
+    r = router()
+    calls = []
+
+    async def fn(a):
+        calls.append(a.target.id)
+        if a.target.model == "m1":
+            raise FakeErr("Request too large on tokens per minute (TPM): Limit 6000, Requested 9000", 413)
+        return a.target.id
+
+    assert asyncio.run(r.run("t", fn, est_tokens=9000)) == "groq:m2"
+    assert calls.count("groq:m1") == 1                       # second key not wasted
+    assert all(s.is_ready("m1") for s in r.pools["groq"].slots)
+    assert r.learned_limits["groq:m1"] == 6000
+    calls.clear()
+    assert asyncio.run(r.run("t", fn, est_tokens=9000)) == "groq:m2"
+    assert "groq:m1" not in calls                            # skipped up front next time
+
+
+def test_shared_quota_cools_every_key_after_one_429():
+    r = LLMRouter(PoolConfig.from_dict(CFG), env={**ENV, "GROQ_SHARED_QUOTA": "true"})
+    calls = []
+
+    async def fn(a):
+        calls.append(a.label())
+        if a.target.provider == "groq":
+            raise FakeErr("rate limit", 429, {"retry-after": "30"})
+        return a.target.id
+
+    assert asyncio.run(r.run("t", fn)) == "gemini:g1"
+    assert len(calls) == 3                                   # one call per groq model, not one per key
+    assert all(not s.is_ready("m1") and not s.is_ready("m2") for s in r.pools["groq"].slots)
+
+
+def test_daily_limit_waits_for_provider_reset():
+    from datetime import datetime
+
+    from app.llm.llm_pool.router import seconds_until_reset
+
+    assert seconds_until_reset("UTC", datetime(2026, 11, 24, 23, 0, tzinfo=UTC)) == 3600
+    # 08:00 UTC is midnight Pacific (PST): a full day to go
+    assert seconds_until_reset("America/Los_Angeles", datetime(2026, 11, 24, 8, 0, tzinfo=UTC)) == 86400
+
+    r = router()
+    gemini = r.config.providers["gemini"]          # resets at midnight Pacific by default
+    groq = r.config.providers["groq"]              # rolling window: trust the provider's hint
+    assert r.daily_cooldown(gemini, 30.0) >= 60
+    assert r.daily_cooldown(groq, 179.0) == 180
+    assert r.daily_cooldown(groq, None) == 3600
+
+
+def test_fallback_tier_used_before_waiting_on_cooling_keys():
+    cfg = {"max_wait_seconds": 30, "tiers": {"a": ["groq:m1"], "b": ["gemini:g1"]}, "fallbacks": {"a": ["b"]}}
+    r = LLMRouter(PoolConfig.from_dict(cfg), env=ENV)
+    for s in r.pools["groq"].slots:
+        s.model_cooldowns["m1"] = time.time() + 25         # short enough that the old router would sleep 25s
+
+    async def fn(a):
+        return a.target.id
+
+    t0 = time.time()
+    assert asyncio.run(r.run("a", fn)) == "gemini:g1"
+    assert time.time() - t0 < 1
+
+
+def test_everything_oversized_raises_with_reason():
+    cfg = {**CFG, "providers": {"groq": {"max_request_tokens": 10}, "gemini": {"max_request_tokens": 10}}}
+    r = LLMRouter(PoolConfig.from_dict(cfg), env=ENV)
+
+    async def fn(a):
+        return "never"
+
+    with pytest.raises(AllProvidersFailed, match="request_too_large"):
+        asyncio.run(r.run("t", fn, est_tokens=1000))
+
+
+def test_unknown_fallback_tier_rejected():
+    with pytest.raises(ValueError):
+        PoolConfig.from_dict({"tiers": {"a": ["groq:m1"]}, "fallbacks": {"a": ["nope"]}})
+
+
+def test_repo_models_yaml_loads():
+    from pathlib import Path
+
+    cfg = PoolConfig.from_yaml(Path(__file__).resolve().parents[1] / "app" / "llm" / "models.yaml")
+    assert cfg.providers["groq"].max_request_tokens == 8000
+    assert len(cfg.chain("deep")) > len(cfg.tiers["deep"])
+    assert cfg.chain("judge") == cfg.tiers["judge"]
