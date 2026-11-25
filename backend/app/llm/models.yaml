@@ -3,9 +3,14 @@
 # Check what is alive with:  python -m llm_pool.healthcheck --config models.yaml [--tools]
 #
 # Free-tier notes (Nov 2026):
+#   ORDER MATTERS FOR LATENCY. Measured 25 Nov 2026 streaming a ~500-token answer:
+#     groq gpt-oss-120b ~2,000 chars/s · gemini flash fast · nvidia minimax-m3.1-flash ~18 chars/s (a 4K-char
+#     answer took ~4 min) · nemotron-3-ultra spends its budget on hidden reasoning before visible text.
+#   So fast providers go first and the slow NVIDIA models are last-resort fallbacks. Groq is skipped
+#   automatically when a prompt exceeds its 8K TPM (max_request_tokens below).
 #   groq        30 RPM, 1K RPD, 8K TPM, 200K TPD *per model*. gpt-oss-20b stalls streams; compound-mini retired.
 #   nvidia      ~40 RPM, prototyping only. nemotron-3-ultra / minimax-m3.1-flash are live; gpt-oss-120b retired.
-#   mistral     free "Experiment" mode, per-project caps.
+#   mistral     removed from the tiers: the keys now return 402 "You need a subscription" (25 Nov 2026).
 #   gemini      per-project caps shown in AI Studio; free-tier prompts may be used for training.
 #   openrouter  ":free" models: 20 RPM, 50 RPD (1K after a one-time $10). Failed calls count too.
 #   cerebras    no lasting free tier (one-time $5 trial that needs a card), so it is not used here.
@@ -19,6 +24,8 @@ max_attempts: 20         # attempts per call across all targets and keys
 providers:
   groq:
     max_request_tokens: 8000   # free tier: 8K tokens/min per model, so a bigger request can never succeed
+    shared_quota: true         # all configured Groq keys are in ONE org (429s name the same org id), so one
+                               # 429 cools every key instead of spending a failed call on each
   # gemini resets daily quotas at midnight Pacific and openrouter at midnight UTC (built-in defaults).
   openrouter:
     headers:
@@ -42,40 +49,37 @@ tiers:
     - groq:qwen/qwen3.8-27b
     - groq:openai/gpt-oss-120b
     - gemini:gemini-3.5-flash-lite
-    - mistral:ministral-3b-2512
-    - nvidia:minimaxai/minimax-m3.1-flash
     - openrouter:google/gemma-4-31b-it:free
+    - nvidia:minimaxai/minimax-m3.1-flash
 
   agent:                    # tool calling with small contexts (quick ReAct + research subagents)
     - groq:openai/gpt-oss-120b
-    - nvidia:minimaxai/minimax-m3.1-flash
     - groq:qwen/qwen3.8-27b
+    - gemini:gemini-3.5-flash
     - gemini:gemini-3.8-flash
     - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
-    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
-    - gemini:gemini-3.5-flash
-    - mistral:mistral-small-latest
-
-  deep:                     # deep-research orchestrator: big, growing context -> high-TPM providers first
-    - nvidia:minimaxai/minimax-m3.1-flash
-    - gemini:gemini-3.8-flash
-    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
-    - gemini:gemini-3.5-flash
-    - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
-    - groq:openai/gpt-oss-120b
-
-  long_context:             # answer synthesis over many sources (1M-token Gemini first)
-    - gemini:gemini-3.8-flash
     - nvidia:minimaxai/minimax-m3.1-flash
     - nvidia:nvidia/nemotron-3-ultra-550b-a55b
-    - groq:openai/gpt-oss-120b
+
+  deep:                     # deep-research orchestrator: big, growing context -> Gemini (high TPM) first
+    - gemini:gemini-3.8-flash
     - gemini:gemini-3.5-flash
+    - groq:openai/gpt-oss-120b
     - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
-    - groq:qwen/qwen3.8-27b
+    - nvidia:minimaxai/minimax-m3.1-flash
+    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
+
+  long_context:             # answer synthesis over many sources: fast streaming writers first
+    - gemini:gemini-3.8-flash
+    - gemini:gemini-3.5-flash
+    - groq:openai/gpt-oss-120b           # only when the sources fit in 8K tokens (quick answers)
     - gemini:gemini-3.5-flash-lite
+    - openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
+    - nvidia:minimaxai/minimax-m3.1-flash
+    - nvidia:nvidia/nemotron-3-ultra-550b-a55b
+    - groq:qwen/qwen3.8-27b
 
   judge:                    # evals: a different family from the agent's primary model
     - gemini:gemini-3.5-flash
     - gemini:gemini-3.5-flash-lite
-    - mistral:mistral-small-latest
     - nvidia:minimaxai/minimax-m3.1-flash

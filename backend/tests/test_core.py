@@ -78,3 +78,14 @@ def test_select_relevant_keeps_lead_and_relevant_chunks_within_budget():
 def test_chunk_attaches_headings():
     chunks = chunk("# Title\n\nPara one.\n\n## Section\n\nPara two.", target_chars=20)
     assert any(c.startswith("## Section") for c in chunks)
+
+
+def test_tool_args_tolerate_words_and_strings():
+    """LangSmith showed web_search failing on recency_days="none"; loose values are now coerced, not rejected."""
+    from app.tools.agent_tools import _as_int, web_search
+
+    assert _as_int("none", None) is None and _as_int("null", 3) == 3
+    assert _as_int("week", None) == 7 and _as_int("7", None) == 7 and _as_int("7.0", None) == 7
+    assert _as_int(5, None) == 5 and _as_int("lots", 8) == 8
+    # the tool schema itself must accept the string the model sent
+    web_search.args_schema.model_validate({"query": "x", "recency_days": "none", "max_results": "8"})
