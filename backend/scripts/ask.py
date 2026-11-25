@@ -29,6 +29,13 @@ async def main(q: str, mode: str, tz: str, raw: bool) -> None:
             print("\n\n--- sources ---")
             for s in data["sources"]:
                 print(f"[{s['n']}] {s['title'][:70]} — {s['url']}")
+            tok = (data.get("usage") or {}).get("tokens") or {}
+            if tok.get("calls"):
+                print(f"\n--- tokens: {tok['total_tokens']:,} in {tok['calls']} calls "
+                      f"({tok['estimated_calls']} estimated) ---")
+                for r in tok["by_model"]:
+                    print(f"  {r['provider']}:{r['model']}  {r['calls']} calls  {r['input_tokens']:,} in  "
+                          f"{r['output_tokens']:,} out  {r['cached_tokens']:,} cached")
             print("usage:", data["usage"], "| invalid citations removed:", data["invalid_citations"])
 
 

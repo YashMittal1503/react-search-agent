@@ -16,6 +16,8 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
+from ..llm.usage import TokenTracker
+
 # Query parameters that only track clicks; dropped when deciding whether two URLs are the same page.
 _TRACKING = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "ref", "ref_src", "mc_cid", "mc_eid"}
 
@@ -132,6 +134,7 @@ class RunContext:
     widgets: list[dict[str, Any]] = field(default_factory=list) # weather/news cards sent with the answer
     route: dict[str, Any] = field(default_factory=dict)         # router output, later also cited sources + title
     usage: dict[str, int] = field(default_factory=lambda: {"llm_calls": 0, "searches": 0, "fetches": 0})
+    tokens: TokenTracker = field(default_factory=TokenTracker)  # every model call of this turn (callback handler)
     _step_ids: Any = field(default_factory=lambda: itertools.count(1))   # ids for timeline steps
 
     @property

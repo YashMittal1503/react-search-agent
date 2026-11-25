@@ -97,6 +97,9 @@ async def run_turn(question: str, thread_id: str | None = None, mode: str = "aut
         "run_id": uuid.UUID(run_id),
         "metadata": {"thread_id": thread_id, "app_run_id": run_id, "mode": mode},
         "tags": ["react-search-agent", f"mode:{mode}"],
+        # LangChain passes callbacks down to every nested run, so the tracker sees the router, both research
+        # agents (and deepagents' subagents), the writer and follow-ups.
+        "callbacks": [ctx.tokens],
     }
     result: dict[str, Any] = {}
     error: list[str] = []
@@ -142,5 +145,7 @@ async def run_turn(question: str, thread_id: str | None = None, mode: str = "aut
         "route": {k: route.get(k) for k in ("intent", "mode", "scene", "params", "location", "search_query")},
         "title": route.get("title"),
         "invalid_citations": route.get("invalid_citations", []),
-        "usage": {**ctx.usage, "sources": len(ctx.registry), "seconds": round(time.time() - ctx.started, 1)},
+        "usage": {**ctx.usage, "llm_calls": len(ctx.tokens.calls), "sources": len(ctx.registry),
+                  "seconds": round(time.time() - ctx.started, 1),
+                  "tokens": ctx.tokens.summary()},          # totals + by_model + by_step
     }}

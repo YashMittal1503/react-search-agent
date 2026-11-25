@@ -4,6 +4,7 @@ Endpoints
     GET    /health                          liveness probe
     GET    /api/status                      which providers/keys are configured (no secrets), and the limits
     GET    /api/suggestions                 pre-loaded questions for the empty state
+    GET    /api/usage?days=7                token use per provider/model across chat runs
     GET    /api/threads                     the caller's threads
     POST   /api/threads                     create a thread
     PATCH  /api/threads/{id}                rename / pin
@@ -111,6 +112,15 @@ async def suggestions():
     return SUGGESTIONS
 
 
+@app.get("/api/usage")
+async def usage(days: int = 7):
+    """Token use per provider/model over the last ``days`` days (1-90), across all chat runs.
+
+    Only counters are returned (no message content), so this is safe to expose on a demo deployment.
+    """
+    return await db.usage_summary(days=max(1, min(days, 90)), source="chat")
+
+
 @app.get("/api/threads")
 async def threads(x_client_id: str | None = Header(default=None)):
     """The caller's threads, most recent first."""
@@ -193,6 +203,9 @@ async def chat(body: ChatIn, request: Request, x_client_id: str | None = Header(
                 meta = {**data, "steps": done_steps, "plan": plan, "follow_ups": followups}
                 meta.pop("answer", None)       # the answer is the message content; don't store it twice
                 await db.add_message(thread_id, "assistant", data.get("answer", ""), meta)
+                # Per-run token accounting, one row per provider/model (queryable via GET /api/usage).
+                await db.add_token_usage(data.get("run_id", ""), thread_id, (data.get("usage") or {}).get("tokens"),
+                                         source="chat", mode=route.get("mode"))
                 await db.update_thread(owner, thread_id, title=data.get("title"), scene=route.get("scene"))
             if await request.is_disconnected():   # user closed the tab / pressed stop: stop the agent too
                 logger.info("client disconnected from thread %s", thread_id)

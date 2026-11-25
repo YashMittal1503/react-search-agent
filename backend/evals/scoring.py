@@ -134,6 +134,8 @@ def global_metrics(run: dict) -> dict[str, Any]:
         "latency_s": run.get("usage", {}).get("seconds"),
         "searches": run.get("usage", {}).get("searches", 0),
         "fetches": run.get("usage", {}).get("fetches", 0),
+        # Agent tokens for this turn (judge tokens are tracked separately by the runner).
+        "total_tokens": ((run.get("usage") or {}).get("tokens") or {}).get("total_tokens", 0),
         "route_intent": (run.get("route") or {}).get("intent"),
         "route_mode": (run.get("route") or {}).get("mode"),
     }
@@ -163,7 +165,7 @@ def _cached(kind: str, payload: dict) -> tuple[Path, dict | None]:
     return path, (json.loads(path.read_text(encoding="utf-8")) if path.exists() else None)
 
 
-async def judge_rubric(query: str, rubric: list[str], answer: str, history: str = "") -> dict | None:
+async def judge_rubric(query: str, rubric: list[str], answer: str, history: str = "", callbacks: list | None = None) -> dict | None:
     """Grade ``answer`` against each rubric criterion with the judge tier.
 
     Args:
@@ -172,6 +174,8 @@ async def judge_rubric(query: str, rubric: list[str], answer: str, history: str 
         answer: the agent's final answer (markdown).
         history: for later turns of a multi-turn item, the earlier conversation, so criteria like
             "resolves 'he' to Christopher Nolan" can be judged.
+        callbacks: LangChain callbacks for the judge call (the runner passes a TokenTracker). Cache hits make no
+            call and so use no tokens.
 
     Returns:
         ``{"score": fraction of criteria met, "criteria": [bool...], "notes": str}`` or ``None`` without a rubric.
@@ -191,7 +195,7 @@ async def judge_rubric(query: str, rubric: list[str], answer: str, history: str 
     prompt = (f"You grade answers from a web research assistant. Be strict but fair.\n\n{convo}QUESTION:\n{query}\n\n"
               f"ANSWER:\n{answer[:6000]}\n\nCRITERIA:\n{criteria}\n\nReturn one boolean per criterion.")
     llm = chat_model("judge", temperature=0).with_structured_output(RubricVerdict)
-    v = await llm.ainvoke([("human", prompt)])
+    v = await llm.ainvoke([("human", prompt)], config={"callbacks": callbacks or [], "metadata": {"usage_step": "judge_rubric"}})
     v = v if isinstance(v, RubricVerdict) else RubricVerdict.model_validate(v)
     # Pad/trim so a judge that returns the wrong number of booleans can't crash or inflate the score.
     flags = (v.criteria + [False] * len(rubric))[: len(rubric)]
@@ -200,7 +204,8 @@ async def judge_rubric(query: str, rubric: list[str], answer: str, history: str 
     return out
 
 
-async def judge_faithfulness(answer: str, excerpts: dict[int, str], max_claims: int = 6) -> dict | None:
+async def judge_faithfulness(answer: str, excerpts: dict[int, str], max_claims: int = 6,
+                             callbacks: list | None = None) -> dict | None:
     """Check cited sentences against the excerpt of the source they cite.
 
     Only sentences containing ``[n]`` markers are claims. Up to ``max_claims`` of them are sent to the judge,
@@ -229,7 +234,7 @@ async def judge_faithfulness(answer: str, excerpts: dict[int, str], max_claims: 
     prompt = ("For each claim, decide if the evidence fully supports it (numbers, names and dates must match). "
               f"Count supported claims.\n\n{body}")
     llm = chat_model("judge", temperature=0).with_structured_output(Faithfulness)
-    v = await llm.ainvoke([("human", prompt)])
+    v = await llm.ainvoke([("human", prompt)], config={"callbacks": callbacks or [], "metadata": {"usage_step": "judge_faithfulness"}})
     v = v if isinstance(v, Faithfulness) else Faithfulness.model_validate(v)
     total = max(1, min(v.total or len(claims), len(claims)))
     out = {"score": min(1.0, v.supported / total), "checked": total, "unsupported": v.unsupported_examples[:3]}

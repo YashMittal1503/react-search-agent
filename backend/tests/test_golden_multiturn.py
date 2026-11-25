@@ -53,7 +53,12 @@ def fake_agent(monkeypatch):
         cited = [{"n": 1, "id": "S1", "url": "https://x.org/a", "domain": "x.org"}] if "[1]" in answers[question] else []
         yield {"event": "done", "data": {
             "run_id": f"run-{len(calls)}", "answer": answers[question], "sources": cited,
-            "all_sources": [{"url": "https://x.org/a"}], "usage": {"searches": len(cited)},
+            "all_sources": [{"url": "https://x.org/a"}],
+            "usage": {"searches": len(cited), "tokens": {
+                "calls": 1, "input_tokens": 100, "output_tokens": 20, "cached_tokens": 0, "reasoning_tokens": 0,
+                "total_tokens": 120, "estimated_calls": 0, "by_step": {"quick_research": 120},
+                "by_model": [{"provider": "groq", "model": "m1", "calls": 1, "input_tokens": 100, "output_tokens": 20,
+                              "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 120, "estimated_calls": 0}]}},
             "route": {"intent": "general", "mode": "quick"}, "invalid_citations": [],
         }}
 
@@ -70,6 +75,11 @@ async def test_multi_turn_items_share_one_thread_and_roll_up(fake_agent):
     assert r["metrics"]["route_mode"] == ["quick", "quick"] and r["turn_routing"] == [True, True]
     s = summarize([r])
     assert s["turns"] == 2 and s["routing_accuracy"] == 1.0
+    # tokens: per turn, rolled up per item (2 turns x 120) and per suite, judge kept separate (no judge here)
+    assert r["turns"][1]["tokens"]["total_tokens"] == 120
+    assert r["tokens"]["total_tokens"] == 240 and r["tokens"]["by_model"][0]["calls"] == 2
+    assert r["metrics"]["total_tokens"] == 240 and r["judge_tokens"]["calls"] == 0
+    assert s["tokens"]["total_tokens"] == 240 and s["avg_tokens"] == 240
 
 
 async def test_failures_name_the_turn(fake_agent, monkeypatch):

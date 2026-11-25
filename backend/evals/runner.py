@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from app.agent.runner import init_graph, run_turn
+from app.llm.usage import TokenTracker, merge_summaries
 from app.observability import flush_traces, setup_observability
 from app.settings import get_settings
 
@@ -82,6 +83,7 @@ async def run_item(item: GoldItem, judge: bool) -> dict[str, Any]:
     """Run every turn of ``item`` in one fresh thread and score it (see the module docstring for the flow)."""
     thread_id = f"eval-{item.id}-{uuid.uuid4().hex[:8]}"   # fresh thread: no memory shared between items or reruns
     history = ""                                           # "User: ... / Assistant: ..." transcript for the judge
+    judge_tokens = TokenTracker(default_step="judge")      # judge calls are counted apart from the agent's
     turns_out: list[dict[str, Any]] = []
     last_cited: tuple[dict, list] | None = None            # (run, contexts) of the last turn that cited sources
 
@@ -99,10 +101,12 @@ async def run_item(item: GoldItem, judge: bool) -> dict[str, Any]:
             "routing_ok": (turn.expected_intent is None or metrics["route_intent"] == turn.expected_intent)
             and (turn.expected_mode is None or metrics["route_mode"] == turn.expected_mode),
             "sources": [{"n": s.get("n"), "url": s.get("url")} for s in run.get("sources", [])],
+            "tokens": (run.get("usage") or {}).get("tokens"),   # agent tokens of this turn, by model and by step
         }
         if judge and run.get("answer") and turn.rubric:
             try:
-                t["rubric"] = await scoring.judge_rubric(turn.query, turn.rubric, run["answer"], history)
+                t["rubric"] = await scoring.judge_rubric(turn.query, turn.rubric, run["answer"], history,
+                                                         callbacks=[judge_tokens])
             except Exception as err:  # noqa: BLE001 - judge quota errors shouldn't fail the item
                 t["rubric_error"] = str(err)[:200]
         # A turn passes when its assertions pass, it produced an answer and (if judged) the rubric score is >= 0.6.
@@ -113,10 +117,13 @@ async def run_item(item: GoldItem, judge: bool) -> dict[str, Any]:
             last_cited = (run, contexts)
         history += f"User: {turn.query}\nAssistant: {(run.get('answer') or '')[:800]}\n"
 
-    return await _roll_up(item, turns_out, last_cited if judge else None)
+    result = await _roll_up(item, turns_out, last_cited if judge else None, judge_tokens)
+    result["judge_tokens"] = judge_tokens.summary()
+    return result
 
 
-async def _roll_up(item: GoldItem, turns: list[dict], last_cited: tuple[dict, list] | None) -> dict[str, Any]:
+async def _roll_up(item: GoldItem, turns: list[dict], last_cited: tuple[dict, list] | None,
+                   judge_tokens: TokenTracker | None = None) -> dict[str, Any]:
     """Combine per-turn results into one item result.
 
     Single-turn items look exactly like before (no ``turns`` key). Multi-turn items keep the per-turn detail
@@ -133,6 +140,7 @@ async def _roll_up(item: GoldItem, turns: list[dict], last_cited: tuple[dict, li
         "latency_s": round(sum(m["latency_s"] or 0 for m in ms), 1),     # total time for the whole conversation
         "searches": sum(m["searches"] for m in ms),
         "fetches": sum(m["fetches"] for m in ms),
+        "total_tokens": sum(m.get("total_tokens", 0) for m in ms),
         "route_intent": [m["route_intent"] for m in ms] if multi else ms[0]["route_intent"],
         "route_mode": [m["route_mode"] for m in ms] if multi else ms[0]["route_mode"],
     }
@@ -144,6 +152,7 @@ async def _roll_up(item: GoldItem, turns: list[dict], last_cited: tuple[dict, li
         "metrics": metrics, "run_id": turns[-1]["run_id"],
         "routing_ok": all(t["routing_ok"] for t in turns), "turn_routing": [t["routing_ok"] for t in turns],
         "sources": turns[-1]["sources"], "passed": all(t["passed"] for t in turns),
+        "tokens": merge_summaries([t.get("tokens") for t in turns]),   # agent tokens for the whole conversation
     }
     judged = [t["rubric"] for t in turns if t.get("rubric")]
     if judged:
@@ -154,7 +163,8 @@ async def _roll_up(item: GoldItem, turns: list[dict], last_cited: tuple[dict, li
     if last_cited:
         run, contexts = last_cited
         try:
-            result["faithfulness"] = await scoring.judge_faithfulness(run["answer"], _excerpts(run, contexts))
+            result["faithfulness"] = await scoring.judge_faithfulness(
+                run["answer"], _excerpts(run, contexts), callbacks=[judge_tokens] if judge_tokens else None)
         except Exception as err:  # noqa: BLE001
             result["faithfulness_error"] = str(err)[:200]
     return result
@@ -186,6 +196,9 @@ def summarize(results: list[dict]) -> dict[str, Any]:
         "latency_p95_s": lat[min(len(lat) - 1, int(len(lat) * 0.95))] if lat else None,
         "avg_searches": mean([r["metrics"]["searches"] for r in results]),
         "avg_fetches": mean([r["metrics"]["fetches"] for r in results]),
+        "avg_tokens": mean([r["metrics"].get("total_tokens") for r in results]),          # agent tokens per item
+        "tokens": merge_summaries([r.get("tokens") for r in results]),                     # agent, by model/step
+        "judge_tokens": merge_summaries([r.get("judge_tokens") for r in results]),         # LLM judge, by model
         "by_category": {c: {"n": len(rs), "pass_rate": mean([1.0 if r["passed"] else 0.0 for r in rs])}
                         for c, rs in sorted(by_cat.items())},
     }
@@ -203,6 +216,7 @@ def to_markdown(summary: dict, results: list[dict], label: str) -> str:
              "| Category | n | pass rate |", "|---|---|---|"]
     for c, v in s["by_category"].items():
         lines.append(f"| {c} | {v['n']} | {v['pass_rate']} |")
+    lines += _token_tables(s)
     lines += ["", "## Failures", ""]
     for r in results:
         if not r["passed"]:
@@ -210,6 +224,24 @@ def to_markdown(summary: dict, results: list[dict], label: str) -> str:
                    or r.get("error") or "rubric below 0.6")
             lines.append(f"- **{r['id']}** ({r.get('label', r['category'])}): {why}")
     return "\n".join(lines) + "\n"
+
+
+def _token_tables(s: dict) -> list[str]:
+    """Markdown tables of token use by provider/model (agent and judge) and agent tokens by graph step."""
+    out: list[str] = []
+    for title, t in (("Agent tokens by model", s.get("tokens")), ("Judge tokens by model", s.get("judge_tokens"))):
+        if not t or not t.get("calls"):
+            continue
+        out += ["", f"## {title}", "",
+                f"{t['calls']} calls · {t['total_tokens']:,} tokens ({t['input_tokens']:,} in, {t['output_tokens']:,} out, "
+                f"{t['cached_tokens']:,} cached) · {t['estimated_calls']} calls estimated", "",
+                "| Provider | Model | Calls | Input | Output | Cached | Total | Estimated calls |", "|---|---|---|---|---|---|---|---|"]
+        out += [f"| {r['provider']} | {r['model']} | {r['calls']} | {r['input_tokens']:,} | {r['output_tokens']:,} | "
+                f"{r['cached_tokens']:,} | {r['total_tokens']:,} | {r['estimated_calls']} |" for r in t["by_model"]]
+    steps = (s.get("tokens") or {}).get("by_step") or {}
+    if steps:
+        out += ["", "Agent tokens by step: " + " · ".join(f"{k} {v:,}" for k, v in sorted(steps.items(), key=lambda kv: -kv[1]))]
+    return out
 
 
 async def run_suite(suite: str, split: str | None, ids: list[str] | None, judge: bool, langsmith: bool) -> Path:
@@ -230,6 +262,7 @@ async def run_suite(suite: str, split: str | None, ids: list[str] | None, judge:
         r = await run_item(item, judge)
         status = "PASS" if r["passed"] else "FAIL"
         print(f"    {status} in {r['metrics']['latency_s']}s · cited {r['metrics']['cited_count']} · "
+              f"{r['metrics']['total_tokens']:,} tokens · "
               + ("; ".join(c["why"] for c in r["checks"] if not c["ok"]) or ""), flush=True)
         results.append(r)
         if langsmith:
@@ -245,7 +278,8 @@ async def run_suite(suite: str, split: str | None, ids: list[str] | None, judge:
     md = REPORTS / f"{label}.md"
     md.write_text(to_markdown(summary, results, label), encoding="utf-8")
     (REPORTS / "latest.md").write_text(md.read_text(encoding="utf-8"), encoding="utf-8")
-    print(json.dumps({k: v for k, v in summary.items() if k != "by_category"}, indent=2))
+    print(json.dumps({k: v for k, v in summary.items() if k not in ("by_category", "tokens", "judge_tokens")}, indent=2))
+    print(f"agent tokens {summary['tokens']['total_tokens']:,} · judge tokens {summary['judge_tokens']['total_tokens']:,}")
     return md
 
 
