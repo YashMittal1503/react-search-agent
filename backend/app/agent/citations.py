@@ -13,7 +13,13 @@ import re
 from .context import SourceRegistry
 
 # A bracket group of one or more ids: "[S3]", "[S3, S7]", "[3; 5]" (models sometimes drop the S).
-_GROUP = re.compile(r"\[(\s*S?\d+\s*(?:[,;]\s*S?\d+\s*)*)\]", re.IGNORECASE)
+# gpt-oss models add a line-range suffix ("S3†L5-L9"); it is allowed and ignored.
+_ID_PART = r"\s*S?\d+(?:†[^\],;]*)?\s*"
+_GROUP = re.compile(rf"\[({_ID_PART}(?:[,;]{_ID_PART})*)\]", re.IGNORECASE)
+# The same group in parentheses, "(S3)" / "(S3, S7)". The S is required here so "(2024)" stays prose.
+_PAREN_GROUP = re.compile(r"\((\s*S\d+\s*(?:[,;]\s*S\d+\s*)*)\)", re.IGNORECASE)
+# gpt-oss writes citations with full-width lenticular brackets: 【S11】. Mapped to [S11] as tokens arrive.
+_FULLWIDTH = str.maketrans({"【": "[", "】": "]"})
 _ID = re.compile(r"S?(\d+)", re.IGNORECASE)
 # A bare URL typed into prose (not inside a markdown link/code). Removed: links come only from citation chips.
 _RAW_URL = re.compile(r"(?<![\(\[<`])https?://[^\s)\]>`]+")
@@ -53,6 +59,7 @@ class CitationStreamer:
 
     def _rewrite(self, text: str) -> str:
         """Rewrite all complete citation groups in ``text`` and strip raw URLs."""
+        text = _PAREN_GROUP.sub(lambda m: f"[{m.group(1)}]", text)
         text = _GROUP.sub(self._replace, text)
         return _RAW_URL.sub("", text)
 
@@ -63,9 +70,14 @@ class CitationStreamer:
         until its ``]`` arrives. 24 chars is longer than any realistic marker group, so ordinary brackets are not
         held back for long.
         """
-        self._buf += token
+        self._buf += token.translate(_FULLWIDTH)
         cut = self._buf.rfind("[")
-        if cut != -1 and "]" not in self._buf[cut:] and len(self._buf) - cut < 24:
+        paren = self._buf.rfind("(")
+        # A trailing "(" or "(S.." may be the start of "(S3)": hold it back too (but not "(2024", which is prose).
+        if paren > cut and (paren == len(self._buf) - 1 or self._buf[paren + 1] in "Ss"):
+            cut = paren
+        closer = "]" if self._buf[cut:cut + 1] == "[" else ")"
+        if cut != -1 and closer not in self._buf[cut:] and len(self._buf) - cut < 24:
             ready, self._buf = self._buf[:cut], self._buf[cut:]
         else:
             ready, self._buf = self._buf, ""

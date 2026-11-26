@@ -207,7 +207,10 @@ async def _run_agent(agent, messages: list, config: RunnableConfig, timeout: flo
     async def consume():
         """Drain the agent's state stream, forwarding plan changes."""
         nonlocal last, todos_seen
-        async for state in agent.astream({"messages": messages}, config={**config, "recursion_limit": 60}, stream_mode="values"):
+        # recursion_limit counts graph *steps*, and every middleware hook is a step of its own (deepagents adds
+        # ~8 per model call), so 60 ended deep runs after ~7 calls with GraphRecursionError. The real cost caps
+        # are ModelCallLimitMiddleware and the timeout; this is only a runaway-loop backstop.
+        async for state in agent.astream({"messages": messages}, config={**config, "recursion_limit": 250}, stream_mode="values"):
             last = state
             todos = state.get("todos") if track_todos else None
             if todos and todos != todos_seen:
