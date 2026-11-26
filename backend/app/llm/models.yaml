@@ -24,8 +24,8 @@ max_attempts: 20         # attempts per call across all targets and keys
 providers:
   groq:
     max_request_tokens: 8000   # free tier: 8K tokens/min per model, so a bigger request can never succeed
-    shared_quota: true         # all configured Groq keys are in ONE org (429s name the same org id), so one
-                               # 429 cools every key instead of spending a failed call on each
+    # Keys come from three separate Groq accounts (since 26 Nov 2026), so each key has its own quota and the
+    # pool round-robins across them. If they ever share one org again, set `shared_quota: true` here.
   # gemini resets daily quotas at midnight Pacific and openrouter at midnight UTC (built-in defaults).
   openrouter:
     headers:

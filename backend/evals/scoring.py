@@ -195,7 +195,12 @@ async def judge_rubric(query: str, rubric: list[str], answer: str, history: str 
     prompt = (f"You grade answers from a web research assistant. Be strict but fair.\n\n{convo}QUESTION:\n{query}\n\n"
               f"ANSWER:\n{answer[:6000]}\n\nCRITERIA:\n{criteria}\n\nReturn one boolean per criterion.")
     llm = chat_model("judge", temperature=0).with_structured_output(RubricVerdict)
-    v = await llm.ainvoke([("human", prompt)], config={"callbacks": callbacks or [], "metadata": {"usage_step": "judge_rubric"}})
+    # Named so the judge's LangSmith traces read "eval judge: rubric" (not an anonymous root run) and can be
+    # filtered by the "eval-judge" tag; the question is in metadata to find which item a verdict belongs to.
+    v = await llm.ainvoke([("human", prompt)], config={
+        "callbacks": callbacks or [], "run_name": "eval judge: rubric", "tags": ["eval-judge", "rubric"],
+        "metadata": {"usage_step": "judge_rubric", "question": query[:200], "criteria": len(rubric)},
+    })
     v = v if isinstance(v, RubricVerdict) else RubricVerdict.model_validate(v)
     # Pad/trim so a judge that returns the wrong number of booleans can't crash or inflate the score.
     flags = (v.criteria + [False] * len(rubric))[: len(rubric)]
@@ -234,7 +239,10 @@ async def judge_faithfulness(answer: str, excerpts: dict[int, str], max_claims: 
     prompt = ("For each claim, decide if the evidence fully supports it (numbers, names and dates must match). "
               f"Count supported claims.\n\n{body}")
     llm = chat_model("judge", temperature=0).with_structured_output(Faithfulness)
-    v = await llm.ainvoke([("human", prompt)], config={"callbacks": callbacks or [], "metadata": {"usage_step": "judge_faithfulness"}})
+    v = await llm.ainvoke([("human", prompt)], config={
+        "callbacks": callbacks or [], "run_name": "eval judge: faithfulness", "tags": ["eval-judge", "faithfulness"],
+        "metadata": {"usage_step": "judge_faithfulness", "claims": len(claims)},
+    })
     v = v if isinstance(v, Faithfulness) else Faithfulness.model_validate(v)
     total = max(1, min(v.total or len(claims), len(claims)))
     out = {"score": min(1.0, v.supported / total), "checked": total, "unsupported": v.unsupported_examples[:3]}
