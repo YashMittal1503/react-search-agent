@@ -89,3 +89,17 @@ def test_tool_args_tolerate_words_and_strings():
     assert _as_int(5, None) == 5 and _as_int("lots", 8) == 8
     # the tool schema itself must accept the string the model sent
     web_search.args_schema.model_validate({"query": "x", "recency_days": "none", "max_results": "8"})
+
+
+def test_stale_year_guard_flags_last_years_prices_only():
+    """'Rishikesh hotel price December 2025' on 25 Nov 2026 is flagged; historical questions are not."""
+    from datetime import datetime
+
+    from app.tools.agent_tools import _stale_year
+
+    now = datetime(2026, 11, 25)
+    assert _stale_year("Rishikesh hotel price December 2025 booking.com", now) == "December 2025"
+    assert _stale_year("site:booking.com Tapovan price per night Dec 2025", now) == "Dec 2025"
+    assert _stale_year("Rishikesh hotel price December 2026", now) is None      # correct year
+    assert _stale_year("India GDP growth March 2015", now) is None               # history, no price words
+    assert _stale_year("best camping spots Rishikesh", now) is None              # no date at all
